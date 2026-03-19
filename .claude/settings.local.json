@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -c \"import recipe_scrapers; help\\(recipe_scrapers.scrape_me\\)\")",
-      "Bash(curl -s http://localhost:5000/recipes)",
-      "Bash(python -:*)"
-    ]
-  }
-}
