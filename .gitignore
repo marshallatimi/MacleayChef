@@ -1,0 +1,12 @@
+# Claude Code session data
+.claude/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
