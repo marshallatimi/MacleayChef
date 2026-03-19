@@ -1,0 +1,67 @@
+name: Build Desktop App
+
+# Triggers:
+#   • Push a tag like "v1.0.0"  → builds AND creates a GitHub Release with the .exe
+#   • "Run workflow" button      → just builds (no release)
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # 1. Check out the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up Python
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Install all dependencies + PyInstaller
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # 4. Build the .exe with PyInstaller
+      - name: Build with PyInstaller
+        run: pyinstaller recipe_manager.spec
+
+      # 5. Upload the .exe as a build artifact (always available)
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecipeManager-Windows
+          path: dist/RecipeManager.exe
+          retention-days: 30
+
+      # 6. Create a GitHub Release with the .exe attached (only on version tags)
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Recipe Manager ${{ github.ref_name }}
+          body: |
+            ## Recipe Manager ${{ github.ref_name }}
+
+            ### Installation
+            1. Download **RecipeManager.exe** below
+            2. Double-click to run — no installation needed
+            3. Your recipes are saved in `recipes.db` next to the .exe
+
+            ### What's included
+            - Recipe scraper (paste any recipe URL)
+            - My Recipes with categories & sorting
+            - Shopping List builder
+            - Meals planner
+          files: dist/RecipeManager.exe
+          draft: false
+          prerelease: false
