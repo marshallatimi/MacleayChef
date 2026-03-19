@@ -1,0 +1,25 @@
+# Claude Code session data
+.claude/
+
+# User data (personal recipes & uploaded photos)
+recipes.db
+static/uploads/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.spec.bak
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
