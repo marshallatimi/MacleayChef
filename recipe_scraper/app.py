@@ -1186,25 +1186,23 @@ def api_run_installer():
     if not path or not os.path.exists(path):
         return jsonify({"error": "Installer file not found"}), 400
     try:
-        # Write a hidden PowerShell script that:
-        #  1. Waits 2 s for Python/Flask to exit and MEI cleanup to finish
-        #  2. Force-kills any leftover RecipeManager.exe (WebView2 children)
-        #  3. Waits 1 more second then runs the installer silently
-        # PowerShell with -WindowStyle Hidden is completely invisible — unlike
-        # cmd/timeout which shows a countdown window even with CREATE_NO_WINDOW.
-        safe_path = path.replace("'", "''")   # escape single quotes for PS
-        ps_path = os.path.join(tempfile.gettempdir(), "_recipe_update.ps1")
-        safe_ps = ps_path.replace("'", "''")
-        with open(ps_path, "w", encoding="utf-8") as f:
-            f.write("Start-Sleep -Seconds 2\r\n")
-            f.write("Stop-Process -Name 'RecipeManager' -Force -ErrorAction SilentlyContinue\r\n")
-            f.write("Start-Sleep -Seconds 1\r\n")
-            f.write(f"Start-Process -FilePath '{safe_path}' -ArgumentList '/SILENT','/RESTARTAPPLICATIONS'\r\n")
-            f.write(f"Remove-Item -Path '{safe_ps}' -Force -ErrorAction SilentlyContinue\r\n")
+        # Use a VBScript launched via wscript.exe — this has zero window flash,
+        # unlike cmd.exe or PowerShell which show briefly even with CREATE_NO_WINDOW.
+        # WScript.Shell.Run with window-style 0 runs child processes completely hidden.
+        vbs_path = os.path.join(tempfile.gettempdir(), "_recipe_update.vbs")
+        # Escape double-quotes in the path for VBScript string concatenation
+        safe_path = path.replace('"', '""')
+        with open(vbs_path, "w", encoding="utf-8") as f:
+            f.write('Set sh = CreateObject("WScript.Shell")\r\n')
+            f.write('WScript.Sleep 2000\r\n')
+            f.write('sh.Run "taskkill /f /im RecipeManager.exe", 0, True\r\n')
+            f.write('WScript.Sleep 1000\r\n')
+            f.write(f'sh.Run Chr(34) & "{safe_path}" & Chr(34) & " /SILENT /RESTARTAPPLICATIONS", 0, False\r\n')
+            f.write(f'Set fso = CreateObject("Scripting.FileSystemObject")\r\n')
+            f.write(f'fso.DeleteFile "{vbs_path}", True\r\n')
 
         subprocess.Popen(
-            ["powershell", "-WindowStyle", "Hidden", "-NonInteractive",
-             "-ExecutionPolicy", "Bypass", "-File", ps_path],
+            ["wscript", "//nologo", vbs_path],
             creationflags=0x08000000,  # CREATE_NO_WINDOW
             close_fds=True,
         )
