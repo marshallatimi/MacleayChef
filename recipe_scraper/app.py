@@ -1156,16 +1156,35 @@ def api_download_update():
 
 @app.route("/api/run-installer", methods=["POST"])
 def api_run_installer():
-    """Launch the downloaded installer then exit the app."""
+    """Launch the downloaded installer then exit the app.
+
+    We use a small batch-script intermediary so the installer only starts
+    *after* this process has fully exited and PyInstaller has finished
+    cleaning up its _MEI temp directory.  Launching the installer directly
+    from a PyInstaller one-file exe causes a 'Failed to remove temporary
+    directory' warning because the installer holds DLL handles open.
+    """
     path = (request.get_json() or {}).get("path", "")
     if not path or not os.path.exists(path):
         return jsonify({"error": "Installer file not found"}), 400
     try:
-        # /SILENT = show progress window, /CLOSEAPPLICATIONS = auto-close running app
-        subprocess.Popen([path, "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
-                         creationflags=0x00000008)  # DETACHED_PROCESS
-        # Give the response time to reach the browser, then exit
-        threading.Timer(1.5, lambda: os._exit(0)).start()
+        # Write a tiny batch script: wait 3 s (for us to exit + MEI cleanup),
+        # then run the installer silently, then delete itself.
+        bat_path = os.path.join(tempfile.gettempdir(), "_recipe_update.bat")
+        with open(bat_path, "w") as f:
+            f.write("@echo off\r\n")
+            f.write("timeout /t 3 /nobreak >nul\r\n")
+            f.write(f'start "" "{path}" /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS\r\n')
+            f.write('del "%~f0"\r\n')
+
+        # Launch the batch script fully detached so it outlives this process
+        subprocess.Popen(
+            ["cmd", "/c", bat_path],
+            creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
+            close_fds=True,
+        )
+        # Exit after the response reaches the browser
+        threading.Timer(1.0, lambda: os._exit(0)).start()
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
