@@ -45,7 +45,7 @@ VSVersionInfo(
 """
     with open(dest, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"Version info → {dest}  (version {short_ver})")
+    print(f"Version info -> {dest}  (version {short_ver})")
 
 
 if __name__ == "__main__":

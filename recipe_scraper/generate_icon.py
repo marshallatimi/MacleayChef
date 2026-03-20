@@ -52,7 +52,7 @@ def generate(dest="icon.ico"):
         sizes=[(sz, sz) for sz in sizes],
         append_images=frames[1:],
     )
-    print(f"Icon saved → {out}")
+    print(f"Icon saved -> {out}")
     return True
 
 
