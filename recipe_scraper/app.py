@@ -1147,7 +1147,7 @@ def api_download_update():
                 download_url,
                 headers={"User-Agent": f"RecipeManager/{APP_VERSION}"},
             )
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with _urlopen_with_ssl_fallback(req, timeout=120) as resp:
                 total     = int(resp.headers.get("Content-Length") or 0)
                 tmp_path  = os.path.join(tempfile.gettempdir(), "MacleayRecipeManager-Update.exe")
                 downloaded = 0
@@ -1186,13 +1186,19 @@ def api_run_installer():
     if not path or not os.path.exists(path):
         return jsonify({"error": "Installer file not found"}), 400
     try:
-        # Write a tiny batch script: wait 3 s (for us to exit + MEI cleanup),
-        # then run the installer silently, then delete itself.
+        # Write a batch script that:
+        #  1. Waits 2 s for Python/Flask to exit and MEI cleanup to finish
+        #  2. Force-kills any leftover RecipeManager.exe processes (WebView2
+        #     child processes can outlive the Python process)
+        #  3. Waits 1 more second to be safe
+        #  4. Runs the installer silently
         bat_path = os.path.join(tempfile.gettempdir(), "_recipe_update.bat")
         with open(bat_path, "w") as f:
             f.write("@echo off\r\n")
-            f.write("timeout /t 3 /nobreak >nul\r\n")
-            f.write(f'start "" "{path}" /SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS\r\n')
+            f.write("timeout /t 2 /nobreak >nul\r\n")
+            f.write("taskkill /f /im RecipeManager.exe >nul 2>&1\r\n")
+            f.write("timeout /t 1 /nobreak >nul\r\n")
+            f.write(f'start "" "{path}" /SILENT /RESTARTAPPLICATIONS\r\n')
             f.write('del "%~f0"\r\n')
 
         # Launch the batch script fully detached so it outlives this process
