@@ -2527,12 +2527,17 @@ async function startInstallUpdate() {
       if (titleEl) titleEl.textContent = "Installing…";
       if (msgEl)   msgEl.textContent   = "The app will close and restart automatically.";
 
-      // Tell the backend to run the installer then exit
+      // Tell the backend to write the launch-script and schedule exit
       await fetch("/api/run-installer", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: data.path }),
       });
+      // Explicitly destroy the webview window so all WebView2 child processes
+      // are terminated cleanly before the installer runs.  The Python backend
+      // also calls os._exit() as a fallback, but closing the window first
+      // ensures Inno Setup's /CLOSEAPPLICATIONS finds nothing still running.
+      if (window.pywebview) window.pywebview.api.close_window();
       return;
     }
 
@@ -3001,8 +3006,12 @@ function tbApi(method) {
 // Disable drag region when maximised so you can't accidentally un-maximise
 // by clicking/dragging the title area; re-enable when restored.
 function syncTitleBarDrag() {
-  const maximised = window.outerWidth  >= screen.availWidth  - 4 &&
-                    window.outerHeight >= screen.availHeight - 4;
+  // Python sets data-win-maximized via evaluate_js on maximize/restore — this
+  // is the ground truth. Fall back to dimension check before Python has set it.
+  const pyMaximised  = document.body.dataset.winMaximized === "1";
+  const dimMaximised = window.outerWidth  >= screen.availWidth  - 4 &&
+                       window.outerHeight >= screen.availHeight - 4;
+  const maximised = pyMaximised || dimMaximised;
   const region = maximised ? "no-drag" : "drag";
   document.querySelectorAll(".tb-logo, .tb-title").forEach(el => {
     el.style.webkitAppRegion = region;
@@ -3011,7 +3020,6 @@ function syncTitleBarDrag() {
   if (btn) btn.textContent = maximised ? "\u2750" : "\u25A1";
 }
 window.addEventListener("resize", syncTitleBarDrag);
-// Run once on load (app starts maximised)
 document.addEventListener("DOMContentLoaded", syncTitleBarDrag);
 
 // ══════════════════════════════════════════════════════════════

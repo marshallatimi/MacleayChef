@@ -189,9 +189,17 @@ class FileApi:
             if _maximized[0]:
                 win.restore()
                 _maximized[0] = False
+                win.evaluate_js(
+                    "document.body.dataset.winMaximized='0';"
+                    "typeof syncTitleBarDrag==='function'&&syncTitleBarDrag();"
+                )
             else:
                 win.maximize()
                 _maximized[0] = True
+                win.evaluate_js(
+                    "document.body.dataset.winMaximized='1';"
+                    "typeof syncTitleBarDrag==='function'&&syncTitleBarDrag();"
+                )
         except Exception:
             pass
 
@@ -407,6 +415,11 @@ def main() -> None:
         try:
             webview.windows[0].maximize()
             _maximized[0] = True
+            # Push maximised state into the page so drag is disabled immediately
+            webview.windows[0].evaluate_js(
+                "document.body.dataset.winMaximized='1';"
+                "typeof syncTitleBarDrag==='function'&&syncTitleBarDrag();"
+            )
         except Exception:
             pass
         if icon_path:

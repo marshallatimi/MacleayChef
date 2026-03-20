@@ -1079,13 +1079,19 @@ def api_version():
 
 def _urlopen_with_ssl_fallback(req, timeout=15):
     """Try urlopen with verified SSL; fall back to unverified if cert chain fails.
+    urllib wraps SSLError inside URLError, so we check the reason attribute.
     This handles laptops where the PyInstaller bundle's cert store is incomplete."""
+    import urllib.error
     try:
         ctx = ssl.create_default_context()
         return urllib.request.urlopen(req, timeout=timeout, context=ctx)
-    except ssl.SSLError:
-        ctx = ssl._create_unverified_context()
-        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    except urllib.error.URLError as e:
+        # Only retry on SSL certificate errors, not timeouts or network issues
+        reason = getattr(e, "reason", e)
+        if isinstance(reason, ssl.SSLError) or "certificate" in str(e).lower() or "ssl" in str(e).lower():
+            ctx = ssl._create_unverified_context()
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        raise
 
 
 @app.route("/api/check-update")
