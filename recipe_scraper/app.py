@@ -175,6 +175,10 @@ def get_db():
     if db is None:
         db = g._database = sqlite3.connect(active_db_path())
         db.row_factory = sqlite3.Row
+        # Use classic rollback journal (not WAL) so cloud-synced drives get a
+        # single self-contained file with no .shm/.wal sidecars.
+        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("PRAGMA synchronous=FULL")
     return db
 
 
@@ -187,6 +191,9 @@ def close_db(exception):
 
 def init_db():
     with sqlite3.connect(active_db_path()) as conn:
+        # Single-file mode — no WAL sidecars (.shm/.wal) so cloud drives sync cleanly
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA synchronous=FULL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS recipes (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1361,6 +1368,9 @@ def switch_cookbook():
     if not path or not os.path.exists(path):
         return jsonify({"error": "Cookbook not found"}), 404
     _active_db["path"] = path
+    # Run schema migration on the newly-activated cookbook so all columns
+    # (including base_recipe, updated_at, etc.) exist before any queries.
+    init_db()
     s = load_settings()
     s["activeCookbook"] = path
     save_settings_to_file(s)
