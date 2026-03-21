@@ -588,6 +588,7 @@
     </div>
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
       <button class="btn btn-ghost" onclick="importCookbook()">📥 Import Cookbook</button>
+      <button class="btn btn-ghost" onclick="linkExternalCookbook()" title="Open a .cookbook file from any folder (network drive, cloud storage, etc.)">🔗 Link from File…</button>
       <button class="btn btn-primary" onclick="createCookbook()">+ New Cookbook</button>
     </div>
   </div>
@@ -3165,16 +3166,22 @@ function renderCookbooksGrid() {
   // Use indices in onclick to avoid JSON quote-in-attribute issues
   grid.innerHTML = savedCookbooks.map((cb, i) => {
     const exportBtn   = `<button class="cb-action-btn" title="Export as CSV" onclick="exportCookbook(${i})">📤</button>`;
-    const rename      = `<button class="cb-action-btn" title="Rename" onclick="renameCookbook(${i})">✏️</button>`;
-    const del         = `<button class="cb-action-btn" title="Delete" onclick="deleteCookbook(${i})">🗑️</button>`;
+    const linked      = cb.linked;
+    const rename      = linked ? "" : `<button class="cb-action-btn" title="Rename" onclick="renameCookbook(${i})">✏️</button>`;
+    const del         = linked
+      ? `<button class="cb-action-btn" title="Remove link (does not delete the file)" onclick="unlinkCookbook(${i})">🔗✕</button>`
+      : `<button class="cb-action-btn" title="Delete" onclick="deleteCookbook(${i})">🗑️</button>`;
     const defBadge    = cb.isDefault  ? `<span class="cb-badge-default">Default</span>` : "";
     const activeBadge = cb.isActive   ? `<span class="cb-badge-active">✓ Active</span>`  : "";
+    const linkedBadge = linked        ? `<span class="cb-badge-default" style="background:var(--muted);color:#fff" title="${esc(cb.path)}">🔗 Linked</span>` : "";
+    const pathHint    = linked        ? `<div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem;word-break:break-all">${esc(cb.path)}</div>` : "";
     return `<div class="cookbook-card${cb.isActive ? " active-cookbook" : ""}" onclick="switchCookbook(${i})">
         <div class="cookbook-card-actions" onclick="event.stopPropagation()">${exportBtn}${rename}${del}</div>
-        <div class="cookbook-card-icon">📖</div>
-        <div class="cookbook-card-name">${cb.name}</div>
+        <div class="cookbook-card-icon">${linked ? "🔗" : "📖"}</div>
+        <div class="cookbook-card-name">${esc(cb.name)}</div>
         <div class="cookbook-card-meta">${cb.recipeCount} recipe${cb.recipeCount !== 1 ? "s" : ""}</div>
-        <div class="cookbook-card-badges">${defBadge}${activeBadge}</div>
+        <div class="cookbook-card-badges">${defBadge}${activeBadge}${linkedBadge}</div>
+        ${pathHint}
       </div>`;
   }).join("");
 }
@@ -3209,6 +3216,37 @@ async function createCookbook() {
   await switchCookbook(data.path, data.name);
   await initCookbooksTab();
   showToast(`"${data.name}" created and activated!`);
+}
+
+async function linkExternalCookbook() {
+  // Use pywebview file dialog to browse for a .cookbook file
+  if (!window.pywebview) {
+    showAlert("Linking a file is only available in the desktop app.");
+    return;
+  }
+  const filePath = await window.pywebview.api.open_file_dialog();
+  if (!filePath) return;
+  const res = await fetch("/cookbooks/link", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({path: filePath})
+  });
+  const data = await res.json();
+  if (!res.ok) { showAlert(data.error || "Could not link cookbook."); return; }
+  await initCookbooksTab();
+  showToast("Cookbook linked! Click it to switch to it.");
+}
+
+async function unlinkCookbook(i) {
+  const cb = savedCookbooks[i];
+  if (!cb) return;
+  const ok = await showConfirm(`Remove the link to "${cb.name}"? The file itself will NOT be deleted.`, "Remove Link", "btn-danger");
+  if (!ok) return;
+  await fetch("/cookbooks/unlink", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({path: cb.path})
+  });
+  await initCookbooksTab();
+  showToast(`Link to "${cb.name}" removed.`);
 }
 
 async function renameCookbook(i) {

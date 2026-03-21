@@ -70,14 +70,17 @@ def add_recent_file(path):
 
 
 def get_cookbooks_list():
-    """Return all .cookbook files in COOKBOOKS_DIR with metadata."""
+    """Return all .cookbook files in COOKBOOKS_DIR plus any linked external ones."""
     os.makedirs(COOKBOOKS_DIR, exist_ok=True)
+    seen_paths = set()
     books = []
-    for fname in sorted(os.listdir(COOKBOOKS_DIR)):
-        if not fname.endswith(".cookbook"):
-            continue
-        name = fname[:-9]
-        path = os.path.join(COOKBOOKS_DIR, fname)
+
+    def _add_book(path, linked=False):
+        norm = os.path.normpath(path)
+        if norm in seen_paths:
+            return
+        seen_paths.add(norm)
+        name = os.path.splitext(os.path.basename(path))[0]
         try:
             c = sqlite3.connect(path)
             count = c.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
@@ -90,7 +93,19 @@ def get_cookbooks_list():
             "isDefault":   False,
             "isActive":    os.path.normpath(path) == os.path.normpath(_active_db["path"]),
             "recipeCount": count,
+            "linked":      linked,   # True = lives outside the local cookbooks folder
         })
+
+    for fname in sorted(os.listdir(COOKBOOKS_DIR)):
+        if fname.endswith(".cookbook"):
+            _add_book(os.path.join(COOKBOOKS_DIR, fname))
+
+    # Linked (external) cookbooks stored in settings
+    s = load_settings()
+    for lpath in s.get("linkedCookbooks", []):
+        if os.path.exists(lpath):
+            _add_book(lpath, linked=True)
+
     books.sort(key=lambda b: b["name"].lower())
     return books
 
@@ -1282,14 +1297,15 @@ def api_run_installer():
             f.write('WScript.Sleep 2000\r\n')
             f.write('sh.Run "taskkill /f /im RecipeManager.exe", 0, True\r\n')
             f.write('WScript.Sleep 1500\r\n')
-            # Run installer silently — bWaitOnReturn=True so we wait until it
-            # fully finishes before we try to launch the new exe.
-            # /RESTARTAPPLICATIONS is intentionally omitted: it uses the Windows
-            # Restart Manager which re-launches via the stale _MEI temp path,
-            # causing "Failed to load Python DLL" on some machines.
-            f.write(f'sh.Run Chr(34) & "{safe_path}" & Chr(34) & " /SILENT", 1, True\r\n')
-            # After the installer exits, launch the freshly-installed exe directly.
-            # ExpandEnvironmentStrings resolves %ProgramFiles% correctly on all locales.
+            # Run installer with /VERYSILENT — suppresses ALL UI including the
+            # "Launch app now" finish-page checkbox, so the installer never
+            # launches the app itself.  bWaitOnReturn=True blocks until fully done.
+            # Window style 0 = completely hidden (no flash).
+            f.write(f'sh.Run Chr(34) & "{safe_path}" & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES", 0, True\r\n')
+            # Give Windows a moment to finish all file I/O before we touch the exe.
+            f.write('WScript.Sleep 3000\r\n')
+            # Launch the freshly-installed exe directly — we are the only thing
+            # that opens it, so there is exactly one new instance.
             f.write('Dim exePath\r\n')
             f.write('exePath = sh.ExpandEnvironmentStrings("%ProgramFiles%") & "\\Macleay Recipe Manager\\RecipeManager.exe"\r\n')
             f.write('If fso.FileExists(exePath) Then\r\n')
@@ -1407,6 +1423,55 @@ def delete_cookbook():
     import gc
     gc.collect()
     os.remove(path)
+    return jsonify({"ok": True})
+
+
+# ── Linked (external) cookbooks ───────────────────────────────────────────────
+
+@app.route("/cookbooks/link", methods=["POST"])
+def link_cookbook():
+    """Add an external .cookbook file path to the linked list in settings."""
+    data  = request.get_json() or {}
+    lpath = (data.get("path") or "").strip()
+    if not lpath:
+        return jsonify({"error": "No path provided"}), 400
+    if not os.path.exists(lpath):
+        return jsonify({"error": "File not found"}), 404
+    # Validate it's a real cookbook
+    try:
+        c = sqlite3.connect(lpath)
+        c.execute("SELECT COUNT(*) FROM recipes")
+        c.close()
+    except Exception:
+        return jsonify({"error": "Not a valid cookbook file"}), 400
+    # Run schema migration on it so it has all current columns
+    old = _active_db["path"]
+    _active_db["path"] = lpath
+    try:
+        init_db()
+    finally:
+        _active_db["path"] = old
+    s = load_settings()
+    linked = s.get("linkedCookbooks", [])
+    norm = os.path.normpath(lpath)
+    if not any(os.path.normpath(p) == norm for p in linked):
+        linked.append(lpath)
+        s["linkedCookbooks"] = linked
+        save_settings_to_file(s)
+    return jsonify({"ok": True})
+
+
+@app.route("/cookbooks/unlink", methods=["POST"])
+def unlink_cookbook():
+    """Remove an external cookbook path from the linked list."""
+    data  = request.get_json() or {}
+    lpath = (data.get("path") or "").strip()
+    s     = load_settings()
+    norm  = os.path.normpath(lpath)
+    linked = [p for p in s.get("linkedCookbooks", [])
+              if os.path.normpath(p) != norm]
+    s["linkedCookbooks"] = linked
+    save_settings_to_file(s)
     return jsonify({"ok": True})
 
 

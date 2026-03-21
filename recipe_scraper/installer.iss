@@ -71,10 +71,6 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 ; Desktop shortcut (optional)
 Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
-[Run]
-; Offer to launch the app after install
-Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName} now"; Flags: nowait postinstall
-
 [UninstallDelete]
 ; Remove any temp files the app may leave in its install dir
 Type: filesandordirs; Name: "{app}\__pycache__"
