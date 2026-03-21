@@ -278,8 +278,8 @@ def _html_to_pdf(html_content: str, pdf_path: str) -> str | None:
     Returns None on success, or an error string on failure.
     """
     err = _weasyprint_html_to_pdf(html_content, pdf_path)
-    if err == "weasyprint_not_available":
-        # WeasyPrint not installed — fall back to Edge headless
+    if err is not None:
+        # WeasyPrint failed (not installed or missing system libs) — fall back to Edge headless
         import tempfile
         tmp = None
         try:

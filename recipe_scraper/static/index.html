@@ -530,6 +530,7 @@
     <div class="recipe-toolbar-left"></div>
     <div class="recipe-toolbar-right">
       <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="toggleShopCategories()">📦 By Category</button>
+      <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="showShopSettings()">⚙️ Categories</button>
       <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printShoppingList()">🖨 Print List</button>
       <button class="btn btn-dark"  style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportShoppingPdf()">💾 Save PDF</button>
       <button class="btn btn-danger" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="clearShoppingList()">🗑 Clear All</button>
@@ -890,6 +891,32 @@
       <button class="btn btn-ghost" style="padding:0.3rem 0.8rem;font-size:0.85rem" onclick="closeChangelogPanel()">Close</button>
     </div>
     <div style="overflow-y:auto;flex:1;padding-right:0.3rem" id="changelog-content"></div>
+  </div>
+</div>
+
+<!-- Shopping Settings Modal -->
+<div id="shop-settings-backdrop" class="img-modal-backdrop" hidden onclick="closeShopSettings(event)">
+  <div class="img-modal" style="width:min(680px,96vw);max-height:88vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:0.6rem">
+        <span style="font-size:1.3rem">🛒</span>
+        <h3 style="margin:0">Shopping List Categories</h3>
+      </div>
+      <button class="btn btn-ghost" style="padding:0.3rem 0.8rem;font-size:0.85rem" onclick="closeShopSettings()">Close</button>
+    </div>
+    <div style="font-size:0.82rem;color:var(--muted);margin-bottom:0.7rem;flex-shrink:0">
+      Assign each ingredient to a category. Use <strong>Auto-Assign</strong> to categorize automatically by ingredient name.
+    </div>
+    <div style="display:flex;gap:0.5rem;margin-bottom:0.7rem;flex-shrink:0">
+      <button class="btn btn-ghost" style="font-size:0.82rem" onclick="autoAssignShopSettings()">✨ Auto-Assign All</button>
+      <input type="text" id="shop-settings-search" placeholder="Filter ingredients…" oninput="renderShopSettingsList()"
+        style="flex:1;padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem"/>
+    </div>
+    <div id="shop-settings-list" style="flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:6px;min-height:0"></div>
+    <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.8rem;flex-shrink:0">
+      <button class="btn btn-ghost" onclick="closeShopSettings()">Cancel</button>
+      <button class="btn btn-dark" onclick="saveShopSettings()">Save</button>
+    </div>
   </div>
 </div>
 
@@ -2546,7 +2573,7 @@ async function showBackupRestore() {
     wrap.innerHTML = backups.map(b => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0.6rem;border-bottom:1px solid var(--border)">
         <span style="font-size:0.8rem;color:var(--text)">${esc(b.filename.replace(/\.cookbook$/, ""))}</span>
-        <button class="btn btn-ghost" style="font-size:0.75rem;padding:0.2rem 0.5rem" onclick="restoreBackup('${b.path.replace(/'/g, "\\'")}','${esc(b.filename)}')">Restore</button>
+        <button class="btn btn-ghost" style="font-size:0.75rem;padding:0.2rem 0.5rem" onclick="restoreBackup('${b.path.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','${esc(b.filename)}')">Restore</button>
       </div>`).join("");
   } catch { wrap.innerHTML = `<div style="padding:0.5rem;font-size:0.82rem;color:var(--red)">Failed to load backups.</div>`; }
 }
@@ -3031,6 +3058,25 @@ function closeHelpPanel(e) {
 // ══════════════════════════════════════════════════════════════
 const CHANGELOG = [
   {
+    version: "v1.2.0",
+    notes: [
+      "PDF export now uses WeasyPrint (pure Python, no Edge required) with Edge as silent fallback",
+      "Shopping list can now be viewed by category — use ⚙️ Categories to assign each ingredient",
+      "Auto-assign ingredients to categories (Spices, Refrigerated, Frozen, Pantry, Utensils/Paperware) with one click",
+      "Daily auto-backup of your cookbook — restore from Settings at any time",
+      "Ingredient search toggle on the recipes page (search by ingredient instead of title)",
+      "Multi-category filter — select multiple categories simultaneously",
+      "Setting a recipe to 0 servings in a group meal now skips it from shopping and printing",
+      "Copy meal button — duplicate a meal with all its recipes",
+      "Reorder meals within a group meal using ↑↓ arrows",
+      "Group meal export now includes a per-meal shopping list",
+      "Category filter when searching meals inside a group meal",
+      "App reloads data when you switch back to it (for shared/network cookbooks)",
+      "Last modified date shown on recipe detail view",
+      "Numbers in recipe instructions scale when you change servings",
+    ]
+  },
+  {
     version: "v1.1.5",
     notes: [
       "Changelog tab added to the menu bar",
@@ -3389,6 +3435,7 @@ async function openCookbooksFolder() {
 
 loadAppSettings();
 loadCookbookInfo();
+loadShopSettings();
 updateSavedCount();
 updateShoppingCount();
 
@@ -3875,13 +3922,34 @@ async function clearShoppingList() {
 }
 
 // ── Shopping category view ─────────────────────────────────────
+// Shopping category keyword map (used for auto-assign)
 const SHOP_CATEGORIES = {
-  "Spices": ["pepper", "salt", "cumin", "paprika", "turmeric", "cinnamon", "oregano", "basil", "thyme", "rosemary", "sage", "parsley", "cilantro", "dill", "bay leaf", "chili flake", "cayenne", "garlic powder", "onion powder", "nutmeg", "coriander", "cardamom", "clove", "ginger powder", "allspice", "curry", "mustard seed", "chili powder", "Old Bay", "Italian seasoning", "seasoning", "spice"],
-  "Refrigerated": ["milk", "cream", "cheese", "butter", "egg", "yogurt", "sour cream", "cream cheese", "cottage cheese", "heavy cream", "half and half", "buttermilk", "tofu", "tempeh", "chicken", "beef", "pork", "turkey", "shrimp", "fish", "salmon", "bacon", "ham", "sausage", "ground beef", "ground pork", "ground turkey"],
-  "Frozen": ["frozen", "ice cream", "peas frozen", "corn frozen", "edamame"],
-  "Pantry": ["flour", "sugar", "oil", "vinegar", "pasta", "rice", "bread", "cracker", "cereal", "oat", "honey", "syrup", "baking powder", "baking soda", "yeast", "cocoa", "chocolate", "vanilla", "canned", "tomato", "bean", "lentil", "chickpea", "broth", "stock", "sauce", "soy sauce", "hot sauce", "ketchup", "mustard", "mayo", "mayonnaise", "olive oil", "vegetable oil", "coconut oil", "sesame oil", "noodle", "crumb", "breadcrumb", "cornstarch", "arrowroot", "gelatin", "agar", "water", "lemon juice", "lime juice", "wine", "onion", "garlic", "ginger", "apple", "banana", "orange", "lemon", "lime", "potato", "carrot", "celery", "bell pepper", "zucchini", "squash", "broccoli", "cauliflower", "spinach", "kale", "lettuce", "tomato sauce", "salsa", "pickle", "olive", "artichoke", "corn", "peas", "mushroom"],
+  "Spices": ["pepper", "salt", "cumin", "paprika", "turmeric", "cinnamon", "oregano", "basil", "thyme", "rosemary", "sage", "parsley", "cilantro", "dill", "bay leaf", "chili flake", "cayenne", "garlic powder", "onion powder", "nutmeg", "coriander", "cardamom", "clove", "ginger powder", "allspice", "curry", "mustard seed", "chili powder", "Old Bay", "Italian seasoning", "seasoning", "spice", "extract", "vanilla", "anise"],
+  "Refrigerated": ["milk", "cream", "cheese", "butter", "egg", "yogurt", "sour cream", "cream cheese", "cottage cheese", "heavy cream", "half and half", "buttermilk", "tofu", "tempeh", "chicken", "beef", "pork", "turkey", "shrimp", "fish", "salmon", "bacon", "ham", "sausage", "ground beef", "ground pork", "ground turkey", "deli", "lunch meat"],
+  "Frozen": ["frozen", "ice cream", "edamame"],
+  "Pantry": ["flour", "sugar", "oil", "vinegar", "pasta", "rice", "bread", "cracker", "cereal", "oat", "honey", "syrup", "baking powder", "baking soda", "yeast", "cocoa", "chocolate", "canned", "tomato", "bean", "lentil", "chickpea", "broth", "stock", "sauce", "soy sauce", "hot sauce", "ketchup", "mustard", "mayo", "mayonnaise", "olive oil", "vegetable oil", "coconut oil", "sesame oil", "noodle", "crumb", "breadcrumb", "cornstarch", "arrowroot", "gelatin", "agar", "water", "lemon juice", "lime juice", "wine", "onion", "garlic", "ginger", "apple", "banana", "orange", "lemon", "lime", "potato", "carrot", "celery", "bell pepper", "zucchini", "squash", "broccoli", "cauliflower", "spinach", "kale", "lettuce", "salsa", "pickle", "olive", "artichoke", "corn", "peas", "mushroom"],
   "Utensils / Plates / Cups / Boats": ["plate", "cup", "bowl", "fork", "spoon", "knife", "napkin", "straw", "boat", "tray", "container", "wrap", "foil", "parchment", "toothpick", "skewer"]
 };
+const SHOP_CATEGORY_NAMES = ["Spices", "Refrigerated", "Frozen", "Pantry", "Utensils / Plates / Cups / Boats", "Other"];
+
+// Saved user-defined ingredient→category mappings
+let _shopSettings = { ingredient_categories: {} };
+
+async function loadShopSettings() {
+  try {
+    const data = await (await fetch("/shopping/settings")).json();
+    _shopSettings = data || { ingredient_categories: {} };
+    if (!_shopSettings.ingredient_categories) _shopSettings.ingredient_categories = {};
+  } catch {}
+}
+
+function _autoDetectCategory(nameKey) {
+  const lower = nameKey.toLowerCase();
+  for (const [cat, keywords] of Object.entries(SHOP_CATEGORIES)) {
+    if (keywords.some(k => lower.includes(k.toLowerCase()))) return cat;
+  }
+  return "Other";
+}
 
 let _shopCategoryView = false;
 function toggleShopCategories() {
@@ -3891,21 +3959,90 @@ function toggleShopCategories() {
 
 function categorizeShopping(combined) {
   const categorized = {};
-  Object.keys(SHOP_CATEGORIES).forEach(cat => categorized[cat] = []);
-  categorized["Other"] = [];
+  SHOP_CATEGORY_NAMES.forEach(cat => categorized[cat] = []);
   combined.forEach(ing => {
-    const lower = ing.toLowerCase();
-    let matched = false;
-    for (const [cat, keywords] of Object.entries(SHOP_CATEGORIES)) {
-      if (keywords.some(k => lower.includes(k.toLowerCase()))) {
-        categorized[cat].push(ing);
-        matched = true;
-        break;
+    const key = ingNameKey(parseIngForCombine(ing).name);
+    const savedCat = _shopSettings.ingredient_categories[key];
+    let matched = savedCat && categorized[savedCat] !== undefined ? savedCat : null;
+    if (!matched) {
+      const lower = ing.toLowerCase();
+      for (const [cat, keywords] of Object.entries(SHOP_CATEGORIES)) {
+        if (keywords.some(k => lower.includes(k.toLowerCase()))) { matched = cat; break; }
       }
     }
-    if (!matched) categorized["Other"].push(ing);
+    const target = matched && categorized[matched] !== undefined ? matched : "Other";
+    categorized[target].push(ing);
   });
   return categorized;
+}
+
+// ── Shopping settings modal ────────────────────────────────────────────────────
+let _shopSettingsIngredients = [];
+
+async function showShopSettings() {
+  await loadShopSettings();
+  try {
+    const rawIngs = await (await fetch("/shopping/ingredients")).json();
+    const keys = new Set();
+    const result = [];
+    rawIngs.forEach(raw => {
+      const key = ingNameKey(parseIngForCombine(raw).name);
+      if (key && !keys.has(key)) { keys.add(key); result.push(key); }
+    });
+    result.sort((a, b) => a.localeCompare(b));
+    _shopSettingsIngredients = result;
+  } catch {
+    _shopSettingsIngredients = [];
+  }
+  renderShopSettingsList();
+  document.getElementById("shop-settings-backdrop").hidden = false;
+}
+
+function renderShopSettingsList() {
+  const search = (document.getElementById("shop-settings-search")?.value || "").toLowerCase().trim();
+  const items = search ? _shopSettingsIngredients.filter(k => k.includes(search)) : _shopSettingsIngredients;
+  const el = document.getElementById("shop-settings-list");
+  if (!el) return;
+  if (!items.length) {
+    el.innerHTML = `<div style="padding:1rem;text-align:center;color:var(--muted);font-size:0.85rem">${_shopSettingsIngredients.length ? "No matches." : "No ingredients found in your cookbook."}</div>`;
+    return;
+  }
+  el.innerHTML = items.map(key => {
+    const current = _shopSettings.ingredient_categories[key] || _autoDetectCategory(key);
+    const opts = SHOP_CATEGORY_NAMES.map(c => `<option value="${esc(c)}"${current===c?" selected":""}>${esc(c)}</option>`).join("");
+    const safeKey = key.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.38rem 0.7rem;border-bottom:1px solid var(--border)">
+      <span style="font-size:0.85rem;flex:1;margin-right:0.5rem">${esc(key)}</span>
+      <select onchange="_shopSettings.ingredient_categories['${safeKey}']=this.value"
+        style="padding:0.2rem 0.3rem;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:0.78rem">
+        ${opts}
+      </select>
+    </div>`;
+  }).join("");
+}
+
+function autoAssignShopSettings() {
+  _shopSettingsIngredients.forEach(key => {
+    _shopSettings.ingredient_categories[key] = _autoDetectCategory(key);
+  });
+  renderShopSettingsList();
+  showToast("Auto-assigned " + _shopSettingsIngredients.length + " ingredients!");
+}
+
+async function saveShopSettings() {
+  try {
+    await fetch("/shopping/settings", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(_shopSettings)
+    });
+    showToast("Shopping categories saved!");
+    closeShopSettings();
+  } catch { showAlert("Failed to save settings."); }
+}
+
+function closeShopSettings(e) {
+  if (!e || e.target === document.getElementById("shop-settings-backdrop"))
+    document.getElementById("shop-settings-backdrop").hidden = true;
 }
 
 function renderShoppingList() {
@@ -4256,9 +4393,9 @@ function renderGroupMealDetail() {
           return `<div class="gm-recipe-row">
             <span class="gm-recipe-name">${esc(r.title)}</span>
             <span class="gm-srv-label">Servings:</span>
-            <input type="number" class="gm-srv-input" min="0.5" step="0.5"
+            <input type="number" class="gm-srv-input" min="0" step="0.5"
               placeholder="${rph}" value="${rval}"
-              title="Servings for this recipe only"
+              title="Servings for this recipe only. Set to 0 to skip from shopping and printing."
               onchange="updateGroupRecipeServings(${m.slot_id != null ? m.slot_id : m.id}, ${r.id}, this.value, ${m.slot_id != null})"/>
           </div>`;
         }).join("") || `<div style="padding:0.5rem 1rem;font-size:0.82rem;color:var(--muted)">No recipes in this meal.</div>`;
@@ -4304,9 +4441,7 @@ function renderGroupMealDetail() {
       <div class="recipe-toolbar">
         <div class="recipe-toolbar-left"></div>
         <div class="recipe-toolbar-right">
-          <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printGroupShopping()">🛒 Print List</button>
-          <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printGroupShoppingByMeal()">🛒 List by Meal</button>
-          <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportGroupShoppingByMealPdf()">📄 Export by Meal</button>
+          <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printGroupShoppingByMeal()">🛒 Print List</button>
           <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printGroupRecipes()">🖨 Print Recipes</button>
           <button class="btn btn-dark" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportGroupFolderPdf()">📁 Export PDF</button>
           <button class="btn btn-danger" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="deleteGroupMeal(${g.id})">🗑 Delete</button>
@@ -4418,7 +4553,9 @@ async function updateGroupRecipeServings(slotOrMealId, recipeId, val, useSlot) {
     : (g.meals||[]).find(m => m.id === slotOrMealId);
   if (!m) return;
   m.recipe_servings = m.recipe_servings || {};
-  const srv = val && parseFloat(val) > 0 ? parseFloat(val) : null;
+  // val="" means "clear override"; val="0" means "skip this recipe"
+  const parsed = parseFloat(val);
+  const srv = (val !== "" && val != null && !isNaN(parsed) && parsed >= 0) ? parsed : null;
   if (srv != null) m.recipe_servings[recipeId] = srv;
   else delete m.recipe_servings[recipeId];
   const url = useSlot
@@ -4647,9 +4784,8 @@ async function exportGroupFolderPdf() {
 
   const pdfs = [];
 
-  // Shopping list PDF
-  const shopEntries = _groupShoppingEntries();
-  const shopHtml = buildShoppingHtml(shopEntries, g.name + " — Shopping List");
+  // Shopping list PDF (per-meal format)
+  const shopHtml = buildShoppingHtmlByMeal(g);
   if (shopHtml) pdfs.push({ filename: "Shopping List", html: shopHtml });
 
   // One PDF per meal
@@ -4663,6 +4799,8 @@ async function exportGroupFolderPdf() {
       const r = savedRecipes.find(r => r.id === mr.id);
       if (!r) return null;
       const effectiveServings = rs[mr.id] != null ? rs[mr.id] : mealServings;
+      // Skip 0-serving recipes from print too
+      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return null;
       const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
       const factor = (effectiveServings && origNum && origNum > 0) ? effectiveServings / origNum : 1;
       return {r, factor};

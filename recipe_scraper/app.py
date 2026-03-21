@@ -41,7 +41,8 @@ DB_PATH              = os.path.join(COOKBOOKS_DIR, DEFAULT_COOKBOOK_NAME + ".coo
 UPLOADS_DIR          = os.path.join(DATA_DIR, "static", "uploads")
 
 _active_db    = {"path": DB_PATH}
-SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+SETTINGS_PATH          = os.path.join(DATA_DIR, "settings.json")
+SHOPPING_SETTINGS_PATH = os.path.join(DATA_DIR, "shopping_settings.json")
 
 def active_db_path():
     return _active_db["path"]
@@ -1387,6 +1388,50 @@ def delete_cookbook():
     gc.collect()
     os.remove(path)
     return jsonify({"ok": True})
+
+
+# ── Shopping settings ─────────────────────────────────────────────────────────
+
+@app.route("/shopping/settings", methods=["GET"])
+def get_shopping_settings():
+    try:
+        with open(SHOPPING_SETTINGS_PATH, encoding="utf-8") as f:
+            return jsonify(json.load(f))
+    except Exception:
+        return jsonify({"ingredient_categories": {}})
+
+
+@app.route("/shopping/settings", methods=["POST"])
+def save_shopping_settings():
+    data = request.get_json() or {}
+    with open(SHOPPING_SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return jsonify({"ok": True})
+
+
+@app.route("/shopping/ingredients", methods=["GET"])
+def list_shopping_ingredients():
+    """Return all unique ingredient strings from all recipes in the active cookbook."""
+    db = get_db()
+    rows = db.execute("SELECT ingredient_groups, ingredients FROM recipes").fetchall()
+    all_ings = set()
+    for row in rows:
+        try:
+            groups = json.loads(row[0] or "[]")
+            for grp in groups:
+                for ing in grp.get("ingredients", []):
+                    if ing and ing.strip():
+                        all_ings.add(ing.strip())
+        except Exception:
+            pass
+        try:
+            plain = json.loads(row[1] or "[]")
+            for ing in plain:
+                if ing and ing.strip():
+                    all_ings.add(ing.strip())
+        except Exception:
+            pass
+    return jsonify(sorted(all_ings))
 
 
 # ── Backup ────────────────────────────────────────────────────────────────────
