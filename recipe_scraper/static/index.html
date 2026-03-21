@@ -448,7 +448,6 @@
     <button class="tab-btn" id="tab-cookbooks-btn" onclick="showTab('cookbooks')">📚 Cookbooks <span id="cookbooks-count"></span></button>
     <!-- Menu controls pushed to the right -->
     <div class="menubar">
-      <button class="menu-trigger" onclick="showChangelogPanel()">📋 Changelog</button>
       <div class="menu-wrap" id="file-menu-wrap">
         <button class="menu-trigger" onclick="toggleMenu('file')">File ▾</button>
         <div class="menu-dropdown" id="file-menu" hidden>
@@ -526,13 +525,13 @@
 
 <div id="tab-shopping" class="page" hidden>
   <!-- Toolbar (hidden until list has items) -->
-  <div id="shopping-actions" class="recipe-toolbar" style="margin-bottom:1rem" hidden>
+  <div id="shopping-actions" class="recipe-toolbar" style="margin-bottom:1rem">
     <div class="recipe-toolbar-left"></div>
     <div class="recipe-toolbar-right">
       <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="toggleShopCategories()">📦 By Category</button>
       <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="showShopSettings()">⚙️ Categories</button>
-      <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printShoppingList()">🖨 Print List</button>
-      <button class="btn btn-dark"  style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportShoppingPdf()">💾 Save PDF</button>
+      <button class="btn btn-ghost btn-print-disabled" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printShoppingList()">🖨 Print List</button>
+      <button class="btn btn-dark btn-print-disabled"  style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportShoppingPdf()">💾 Save PDF</button>
       <button class="btn btn-danger" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="clearShoppingList()">🗑 Clear All</button>
     </div>
   </div>
@@ -880,23 +879,9 @@
   </div>
 </div>
 
-<!-- Changelog Modal -->
-<div id="changelog-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeChangelogPanel(event)">
-  <div class="img-modal" style="width:min(560px,96vw);max-height:88vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.9rem;flex-shrink:0">
-      <div style="display:flex;align-items:center;gap:0.6rem">
-        <span style="font-size:1.4rem">📋</span>
-        <h3 style="margin:0">Changelog</h3>
-      </div>
-      <button class="btn btn-ghost" style="padding:0.3rem 0.8rem;font-size:0.85rem" onclick="closeChangelogPanel()">Close</button>
-    </div>
-    <div style="overflow-y:auto;flex:1;padding-right:0.3rem" id="changelog-content"></div>
-  </div>
-</div>
-
 <!-- Shopping Settings Modal -->
 <div id="shop-settings-backdrop" class="img-modal-backdrop" hidden onclick="closeShopSettings(event)">
-  <div class="img-modal" style="width:min(680px,96vw);max-height:88vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
+  <div class="img-modal" style="width:min(680px,96vw);height:80vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.8rem;flex-shrink:0">
       <div style="display:flex;align-items:center;gap:0.6rem">
         <span style="font-size:1.3rem">🛒</span>
@@ -908,9 +893,18 @@
       Assign each ingredient to a category. Use <strong>Auto-Assign</strong> to categorize automatically by ingredient name.
     </div>
     <div style="display:flex;gap:0.5rem;margin-bottom:0.7rem;flex-shrink:0">
-      <button class="btn btn-ghost" style="font-size:0.82rem" onclick="autoAssignShopSettings()">✨ Auto-Assign All</button>
       <input type="text" id="shop-settings-search" placeholder="Filter ingredients…" oninput="renderShopSettingsList()"
         style="flex:1;padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem"/>
+      <select id="shop-settings-cat-filter" onchange="renderShopSettingsList()"
+        style="padding:0.3rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem">
+        <option value="">All categories</option>
+        <option value="Spices">Spices</option>
+        <option value="Refrigerated">Refrigerated</option>
+        <option value="Frozen">Frozen</option>
+        <option value="Pantry">Pantry</option>
+        <option value="Utensils / Plates / Cups / Boats">Utensils / Plates / Cups / Boats</option>
+        <option value="Other">Other</option>
+      </select>
     </div>
     <div id="shop-settings-list" style="flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:6px;min-height:0"></div>
     <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.8rem;flex-shrink:0">
@@ -1064,7 +1058,11 @@ async function saveCurrentRecipe() {
   try {
     const res = await fetch("/recipes", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(currentScrape) });
     if (res.ok) { btn.textContent = "Saved!"; btn.classList.replace("btn-primary","btn-success"); updateSavedCount(); }
-    else { btn.disabled = false; btn.textContent = "Save Recipe"; }
+    else {
+      const errData = await res.json().catch(() => ({}));
+      btn.disabled = false; btn.textContent = "Save Recipe";
+      showAlert("Failed to save recipe: " + (errData.error || `Server error ${res.status}`));
+    }
   } catch { btn.disabled = false; btn.textContent = "Save Recipe"; }
 }
 
@@ -2268,7 +2266,8 @@ async function submitCreateRecipe() {
     showTab("saved");
     openRecipe(saved.id);
   } else {
-    showAlert("Failed to create recipe.");
+    const errData = await res.json().catch(() => ({}));
+    showAlert("Failed to create recipe: " + (errData.error || `Server error ${res.status}`));
   }
 }
 
@@ -3051,57 +3050,6 @@ function _renderHelp(topicId) {
 function closeHelpPanel(e) {
   if (!e || e.target === document.getElementById("help-modal-backdrop"))
     document.getElementById("help-modal-backdrop").hidden = true;
-}
-
-// ══════════════════════════════════════════════════════════════
-// Changelog
-// ══════════════════════════════════════════════════════════════
-const CHANGELOG = [
-  {
-    version: "v1.2.0",
-    notes: [
-      "PDF export now uses WeasyPrint (pure Python, no Edge required) with Edge as silent fallback",
-      "Shopping list can now be viewed by category — use ⚙️ Categories to assign each ingredient",
-      "Auto-assign ingredients to categories (Spices, Refrigerated, Frozen, Pantry, Utensils/Paperware) with one click",
-      "Daily auto-backup of your cookbook — restore from Settings at any time",
-      "Ingredient search toggle on the recipes page (search by ingredient instead of title)",
-      "Multi-category filter — select multiple categories simultaneously",
-      "Setting a recipe to 0 servings in a group meal now skips it from shopping and printing",
-      "Copy meal button — duplicate a meal with all its recipes",
-      "Reorder meals within a group meal using ↑↓ arrows",
-      "Group meal export now includes a per-meal shopping list",
-      "Category filter when searching meals inside a group meal",
-      "App reloads data when you switch back to it (for shared/network cookbooks)",
-      "Last modified date shown on recipe detail view",
-      "Numbers in recipe instructions scale when you change servings",
-    ]
-  },
-  {
-    version: "v1.1.5",
-    notes: [
-      "Changelog tab added to the menu bar",
-      "Help panel scrollbar now reaches the full content height",
-      "Help sidebar category names no longer spill over the divider",
-      "App opens maximised and in front after an update install",
-    ]
-  },
-];
-
-function showChangelogPanel() {
-  const el = document.getElementById("changelog-content");
-  el.innerHTML = CHANGELOG.map(entry => `
-    <div style="margin-bottom:1.2rem">
-      <div style="font-weight:800;font-size:1rem;color:var(--red);margin-bottom:0.35rem">${entry.version}</div>
-      <ul style="margin:0;padding-left:1.2rem">
-        ${entry.notes.map(n => `<li style="font-size:0.88rem;color:var(--text);line-height:1.65;margin-bottom:0.2rem">${n}</li>`).join("")}
-      </ul>
-    </div>
-  `).join("");
-  document.getElementById("changelog-modal-backdrop").hidden = false;
-}
-function closeChangelogPanel(e) {
-  if (!e || e.target === document.getElementById("changelog-modal-backdrop"))
-    document.getElementById("changelog-modal-backdrop").hidden = true;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -3994,13 +3942,23 @@ async function showShopSettings() {
   } catch {
     _shopSettingsIngredients = [];
   }
+  // Auto-assign any unassigned ingredients
+  _shopSettingsIngredients.forEach(key => {
+    if (!(_shopSettings.ingredient_categories[key] != null)) {
+      _shopSettings.ingredient_categories[key] = _autoDetectCategory(key);
+    }
+  });
   renderShopSettingsList();
   document.getElementById("shop-settings-backdrop").hidden = false;
 }
 
 function renderShopSettingsList() {
   const search = (document.getElementById("shop-settings-search")?.value || "").toLowerCase().trim();
-  const items = search ? _shopSettingsIngredients.filter(k => k.includes(search)) : _shopSettingsIngredients;
+  const catFilter = document.getElementById("shop-settings-cat-filter")?.value || "";
+  let items = search ? _shopSettingsIngredients.filter(k => k.includes(search)) : [..._shopSettingsIngredients];
+  if (catFilter) {
+    items = items.filter(k => (_shopSettings.ingredient_categories[k] || _autoDetectCategory(k)) === catFilter);
+  }
   const el = document.getElementById("shop-settings-list");
   if (!el) return;
   if (!items.length) {
@@ -4052,11 +4010,16 @@ function renderShoppingList() {
 
   if (!shoppingList.length) {
     content.innerHTML = `<div class="shop-empty"><div class="big-icon">🛒</div><p>No recipes added yet.<br>Select a recipe above to get started.</p></div>`;
-    if (actions) actions.hidden = true;
+    if (actions) {
+      actions.hidden = false;
+      actions.querySelectorAll('.btn-print-disabled').forEach(b => b.disabled = true);
+    }
     return;
   }
-
-  if (actions) actions.hidden = false;
+  if (actions) {
+    actions.hidden = false;
+    actions.querySelectorAll('.btn-print-disabled').forEach(b => b.disabled = false);
+  }
   const totalItems = shoppingList.reduce((s, e) => s + e.ingredients.length, 0);
 
   if (_shopCategoryView) {
@@ -4103,6 +4066,7 @@ function parseIngForCombine(text) {
 function ingNameKey(name) {
   return name
     .toLowerCase()
+    .replace(/^[-–—\s]+/, '')   // strip leading dashes/em-dashes
     .replace(/\(.*?\)/g, '')   // strip (notes)
     .replace(/,.*$/, '')        // strip ", optional" etc
     .replace(/^(large|medium|small|extra.large|xl|big)\s+/i, '')

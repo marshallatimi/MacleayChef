@@ -21,13 +21,13 @@ datas += collect_data_files('mf2py')          # backcompat-rules file (fixes cra
 datas += collect_data_files('w3lib')
 datas += collect_data_files('parsel')
 
-# WeasyPrint ships CSS/font data files
+# xhtml2pdf ships data files (PDF fonts etc.)
 try:
-    datas += collect_data_files('weasyprint')
+    datas += collect_data_files('xhtml2pdf')
 except Exception:
     pass
 try:
-    datas += collect_data_files('pyphen')
+    datas += collect_data_files('reportlab')
 except Exception:
     pass
 
@@ -39,7 +39,8 @@ hiddenimports = (
     collect_submodules('jinja2') +
     collect_submodules('webview') +
     collect_submodules('mf2py') +
-    collect_submodules('weasyprint') +
+    collect_submodules('xhtml2pdf') +
+    collect_submodules('reportlab') +
     [
         'sqlite3',
         'json',
@@ -50,12 +51,12 @@ hiddenimports = (
         'encodings.ascii',
         'urllib.request',
         'threading',
-        'weasyprint',
-        'pydyf',
-        'fonttools',
-        'pyphen',
-        'cssselect2',
-        'tinycss2',
+        'xhtml2pdf',
+        'xhtml2pdf.pisa',
+        'reportlab',
+        'reportlab.pdfgen',
+        'reportlab.lib',
+        'html5lib',
     ]
 )
 

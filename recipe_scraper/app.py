@@ -187,8 +187,12 @@ def init_db():
                 site_name          TEXT,
                 source_url         TEXT,
                 category           TEXT    DEFAULT NULL,
+                categories         TEXT    DEFAULT NULL,
+                notes              TEXT    DEFAULT NULL,
                 view_count         INTEGER DEFAULT 0,
-                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at         TIMESTAMP DEFAULT NULL,
+                base_recipe        TEXT    DEFAULT NULL
             )
         """)
         for col in ["ingredient_groups", "instruction_groups", "category TEXT DEFAULT NULL",
@@ -723,30 +727,33 @@ def save_recipe():
     sg = data.get("instruction_groups")
     cats, category = _categories_payload(data)
     db = get_db()
-    cur = db.execute(
-        """INSERT INTO recipes
-           (title, servings, servings_num, ingredients, instructions,
-            ingredient_groups, instruction_groups, image, total_time, site_name, source_url, category, categories,
-            base_recipe)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            data.get("title", "Untitled"),
-            data.get("servings"),
-            data.get("servings_num"),
-            json.dumps(flatten_groups(ig, "ingredients") if ig else data.get("ingredients", [])),
-            json.dumps(flatten_groups(sg, "steps") if sg else data.get("instructions", [])),
-            json.dumps(ig) if ig else None,
-            json.dumps(sg) if sg else None,
-            data.get("image"),
-            data.get("total_time"),
-            data.get("site_name"),
-            data.get("source_url"),
-            category,
-            json.dumps(cats) if cats else None,
-            data.get("base_recipe") or None,
-        ),
-    )
-    db.commit()
+    try:
+        cur = db.execute(
+            """INSERT INTO recipes
+               (title, servings, servings_num, ingredients, instructions,
+                ingredient_groups, instruction_groups, image, total_time, site_name, source_url, category, categories,
+                base_recipe)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                data.get("title", "Untitled"),
+                data.get("servings"),
+                data.get("servings_num"),
+                json.dumps(flatten_groups(ig, "ingredients") if ig else data.get("ingredients", [])),
+                json.dumps(flatten_groups(sg, "steps") if sg else data.get("instructions", [])),
+                json.dumps(ig) if ig else None,
+                json.dumps(sg) if sg else None,
+                data.get("image"),
+                data.get("total_time"),
+                data.get("site_name"),
+                data.get("source_url"),
+                category,
+                json.dumps(cats) if cats else None,
+                data.get("base_recipe") or None,
+            ),
+        )
+        db.commit()
+    except Exception as e:
+        return jsonify({"error": f"Database error: {e}"}), 500
     row = db.execute("SELECT * FROM recipes WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify(row_to_dict(row)), 201
 

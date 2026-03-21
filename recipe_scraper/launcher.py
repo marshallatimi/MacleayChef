@@ -256,30 +256,42 @@ def _generate_app_icon() -> str | None:
         return None
 
 
-def _weasyprint_html_to_pdf(html_content: str, pdf_path: str) -> str | None:
-    """Render HTML string → pdf_path using WeasyPrint (pure Python, no browser needed).
+def _pisa_html_to_pdf(html_content: str, pdf_path: str) -> str | None:
+    """Render HTML string → pdf_path using xhtml2pdf/pisa (pure Python, no system deps).
     Returns None on success, or an error string on failure.
     """
     try:
-        import weasyprint
-        weasyprint.HTML(string=html_content).write_pdf(pdf_path)
-        if os.path.exists(pdf_path):
+        from xhtml2pdf import pisa
+        with open(pdf_path, 'wb') as f:
+            result = pisa.CreatePDF(html_content.encode('utf-8'), dest=f)
+        if result.err:
+            # Clean up any partial file
+            try:
+                if os.path.exists(pdf_path): os.unlink(pdf_path)
+            except OSError:
+                pass
+            return f"PDF generation error (pisa): {result.err}"
+        if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
             return None  # success
-        return "PDF was not created by WeasyPrint."
+        return "PDF was empty after generation."
     except ImportError:
-        return "weasyprint_not_available"
+        return "pisa_not_available"
     except Exception as e:
+        try:
+            if os.path.exists(pdf_path): os.unlink(pdf_path)
+        except OSError:
+            pass
         return f"PDF generation error: {e}"
 
 
 def _html_to_pdf(html_content: str, pdf_path: str) -> str | None:
-    """Render HTML → PDF. Tries WeasyPrint first (pure Python, always works),
-    then falls back to Edge headless if WeasyPrint is unavailable.
+    """Render HTML → PDF. Tries xhtml2pdf/pisa first (pure Python, always works),
+    then falls back to Edge headless if pisa is unavailable.
     Returns None on success, or an error string on failure.
     """
-    err = _weasyprint_html_to_pdf(html_content, pdf_path)
+    err = _pisa_html_to_pdf(html_content, pdf_path)
     if err is not None:
-        # WeasyPrint failed (not installed or missing system libs) — fall back to Edge headless
+        # pisa failed — fall back to Edge headless
         import tempfile
         tmp = None
         try:
