@@ -4434,7 +4434,7 @@ function renderShoppingList() {
   if (_shopCategoryView) {
     const allIngs = shoppingList.flatMap(e => e.ingredients);
     const categorized = categorizeShopping(allIngs);
-    const catHtml = Object.entries(categorized).filter(([,v]) => v.length).map(([cat, ings]) => `
+    const catHtml = Object.entries(categorized).filter(([,v]) => v.length).sort(([a],[b])=>a.localeCompare(b)).map(([cat, ings]) => `
       <div style="margin-bottom:1rem">
         <div style="font-weight:700;font-size:0.82rem;text-transform:uppercase;letter-spacing:0.6px;color:var(--red);margin-bottom:0.4rem">${esc(cat)}</div>
         ${[...ings].sort((a,b)=>ingNameKey(parseIngForCombine(a).name||a).localeCompare(ingNameKey(parseIngForCombine(b).name||b))).map(i => `<div style="font-size:0.88rem;padding:0.15rem 0">___ ${esc(formatIngNameFirst(i))}</div>`).join("")}
@@ -4626,7 +4626,7 @@ function buildShoppingHtml(listEntries, title) {
   const stripQty = s => s.replace(/^[\d\s\/\u2013\-\.]+(?:tsp|tbsp|teaspoons?|tablespoons?|cups?|pints?|quarts?|gallons?|gal|qt|oz|ounces?|lbs?|pounds?|g|kg|ml|l)?\s*/i, "").toLowerCase();
   // Categorize and sort alphabetically within each category
   const categorized = categorizeShopping(combined);
-  const catSections = SHOP_CATEGORY_NAMES.filter(cat => categorized[cat] && categorized[cat].length)
+  const catSections = [...SHOP_CATEGORY_NAMES].sort((a,b)=>a.localeCompare(b)).filter(cat => categorized[cat] && categorized[cat].length)
     .map(cat => {
       const sorted = [...categorized[cat]].sort((a, b) => stripQty(a).localeCompare(stripQty(b)));
       return `<div class="cat-section">
@@ -4859,9 +4859,10 @@ function renderGroupMealDetail() {
           </div>`;
         }).join("") || `<div style="padding:0.5rem 1rem;font-size:0.82rem;color:var(--muted)">No recipes in this meal.</div>`;
 
-        const expanded = _gmExpandedMeals.has(m.id);
+        const slotKey = m.slot_id != null ? m.slot_id : m.id;
+        const expanded = _gmExpandedMeals.has(slotKey);
         return `<div class="gm-meal-block">
-          <div class="gm-meal-header${expanded?" open":""}" id="gm-mhdr-${m.id}" onclick="toggleGmMeal(${m.id})">
+          <div class="gm-meal-header${expanded?" open":""}" id="gm-mhdr-${slotKey}" onclick="toggleGmMeal(${slotKey})">
             <span class="gm-meal-chevron">▶</span>
             <span class="gm-meal-name">${esc(m.name)}</span>
             <span class="gm-meal-meta">${rc} recipe${rc!==1?"s":""}</span>
@@ -4876,7 +4877,7 @@ function renderGroupMealDetail() {
             <button class="del-btn" style="font-size:0.9rem;padding:0 4px;flex-shrink:0"
               onclick="event.stopPropagation();removeMealFromGroupMeal(${m.slot_id != null ? m.slot_id : m.id}, ${m.slot_id != null})">✕</button>
           </div>
-          <div class="gm-recipe-list${expanded?" open":""}" id="gm-rlist-${m.id}"
+          <div class="gm-recipe-list${expanded?" open":""}" id="gm-rlist-${slotKey}"
             onclick="event.stopPropagation()">
             ${recipeRows}
           </div>
@@ -4992,7 +4993,8 @@ async function updateGroupMealServings(slotOrMealId, val, useSlot) {
     const full = savedMeals.find(sm => sm.id === m.id);
     if (full) {
       (full.recipes||[]).forEach(r => {
-        const inp = document.querySelector(`#gm-rlist-${m.id} .gm-recipe-row input[onchange*="${r.id}"]`);
+        const slotKey2 = m.slot_id != null ? m.slot_id : m.id;
+        const inp = document.querySelector(`#gm-rlist-${slotKey2} .gm-recipe-row input[onchange*="${r.id}"]`);
         if (inp && (inp.value === "" || inp.value == null)) {
           const effBase = srv != null ? srv : (g.default_servings != null ? g.default_servings : null);
           inp.placeholder = effBase != null ? `Meal default (${effBase})` : "Servings…";
@@ -5197,11 +5199,16 @@ function buildShoppingHtmlByMeal(g) {
     if (ings.length) sections.push({mealName: full.name, ingredients: ings});
   });
   if (!sections.length) return null;
-  const sectionHtml = sections.map(sec => `
+  const sectionHtml = sections.map(sec => {
+    const sorted = [...sec.ingredients].sort((a,b) =>
+      ingNameKey(parseIngForCombine(a).name||a).localeCompare(ingNameKey(parseIngForCombine(b).name||b))
+    );
+    return `
     <div class="meal-section">
       <div class="meal-header">${escP(sec.mealName)}</div>
-      ${sec.ingredients.map(i => `<div class="ing">___ ${escP(i)}</div>`).join("\n")}
-    </div>`).join("\n");
+      ${sorted.map(i => `<div class="ing">___ ${escP(formatIngNameFirst(i))}</div>`).join("\n")}
+    </div>`;
+  }).join("\n");
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
 <title>${escP(g.name)} — Shopping List by Meal</title>
 <style>

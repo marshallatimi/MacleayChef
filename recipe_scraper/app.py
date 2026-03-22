@@ -1436,17 +1436,23 @@ def api_run_installer():
         with open(vbs_path, "w", encoding="utf-8") as f:
             f.write('Set sh = CreateObject("WScript.Shell")\r\n')
             f.write('Set fso = CreateObject("Scripting.FileSystemObject")\r\n')
-            # Kill the running app and wait for it to fully exit
+            # Kill the running app and wait for it to fully exit before touching files.
+            # Longer pre-installer delay prevents "Failed to load Python DLL" on slow
+            # machines where the old process holds the DLL handle a bit longer.
             f.write('WScript.Sleep 2000\r\n')
             f.write('sh.Run "taskkill /f /im RecipeManager.exe", 0, True\r\n')
-            f.write('WScript.Sleep 1500\r\n')
+            f.write('WScript.Sleep 4000\r\n')
             # Run installer with /VERYSILENT — suppresses ALL UI including the
             # "Launch app now" finish-page checkbox, so the installer never
             # launches the app itself.  bWaitOnReturn=True blocks until fully done.
             # Window style 0 = completely hidden (no flash).
             f.write(f'sh.Run Chr(34) & "{safe_path}" & Chr(34) & " /VERYSILENT /SUPPRESSMSGBOXES", 0, True\r\n')
-            # Give Windows extra time to finish all file I/O and release handles.
-            f.write('WScript.Sleep 5000\r\n')
+            # Longer post-installer wait (10 s) lets Windows finish all file I/O,
+            # release any remaining DLL handles, and lets the new exe's PyInstaller
+            # temp-dir extraction complete before any import is attempted.
+            # This fixes "Python DLL load failure" on first launch after update
+            # and the "PDF export fails once then works after restart" issue.
+            f.write('WScript.Sleep 10000\r\n')
             # Resolve the install path — check %ProgramFiles% first, then
             # %ProgramW6432% (always the 64-bit Program Files even in WoW64/32-bit
             # wscript.exe, which is where Inno Setup actually installs on 64-bit OS).
