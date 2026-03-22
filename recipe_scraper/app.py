@@ -520,7 +520,14 @@ def scrape():
 
 @app.route("/recipes", methods=["GET"])
 def list_recipes():
-    rows = get_db().execute("SELECT * FROM recipes ORDER BY created_at DESC").fetchall()
+    # Exclude the image column — base64 images can be hundreds of KB each.
+    # The full image is fetched individually when a recipe is opened.
+    rows = get_db().execute(
+        "SELECT id,title,servings,servings_num,ingredients,instructions,"
+        "ingredient_groups,instruction_groups,total_time,site_name,source_url,"
+        "category,categories,notes,view_count,created_at,updated_at,base_recipe"
+        " FROM recipes ORDER BY created_at DESC"
+    ).fetchall()
     return jsonify([row_to_dict(r) for r in rows])
 
 
@@ -1539,6 +1546,8 @@ def rename_cookbook():
     if not new_name:
         return jsonify({"error": "Name required"}), 400
     safe_new = re.sub(r'[\\/:*?"<>|]', "", new_name).strip()
+    if not safe_new:
+        return jsonify({"error": "Name contains only invalid characters"}), 400
     old_path = os.path.join(COOKBOOKS_DIR, old_name + ".cookbook")
     new_path = os.path.join(COOKBOOKS_DIR, safe_new + ".cookbook")
     if not os.path.exists(old_path):
@@ -1728,8 +1737,17 @@ def restore_backup():
     import shutil
     data = request.get_json()
     backup_path = data.get("path", "")
-    if not backup_path or not os.path.exists(backup_path):
+    if not backup_path:
+        return jsonify({"error": "No path provided"}), 400
+    # Validate path is inside the expected backups directory to prevent traversal
+    backups_dir = os.path.join(DATA_DIR, "backups")
+    abs_backup  = os.path.abspath(backup_path)
+    abs_backups = os.path.abspath(backups_dir)
+    if not abs_backup.startswith(abs_backups + os.sep) and abs_backup != abs_backups:
+        return jsonify({"error": "Invalid backup path"}), 400
+    if not os.path.exists(abs_backup):
         return jsonify({"error": "Backup file not found"}), 404
+    backup_path = abs_backup
     # Validate it's a valid SQLite cookbook
     try:
         conn = sqlite3.connect(backup_path)
@@ -2090,25 +2108,27 @@ def import_cookbook():
         init_db()
         _active_db["path"] = old_path          # restore — caller must switch explicitly
         conn = sqlite3.connect(dest_path)
-        for r in recipes:
-            ig = r.get("ingredient_groups")
-            sg = r.get("instruction_groups")
-            conn.execute(
-                """INSERT INTO recipes
-                   (title,servings,servings_num,ingredients,instructions,
-                    ingredient_groups,instruction_groups,image,total_time,
-                    site_name,source_url,category)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (r["title"], r.get("servings"), r.get("servings_num"),
-                 json.dumps(r.get("ingredients", [])),
-                 json.dumps(r.get("instructions", [])),
-                 json.dumps(ig) if ig else None,
-                 json.dumps(sg) if sg else None,
-                 r.get("image"), r.get("total_time"),
-                 r.get("site_name"), r.get("source_url"), r.get("category")),
-            )
-        conn.commit()
-        conn.close()
+        try:
+            for r in recipes:
+                ig = r.get("ingredient_groups")
+                sg = r.get("instruction_groups")
+                conn.execute(
+                    """INSERT INTO recipes
+                       (title,servings,servings_num,ingredients,instructions,
+                        ingredient_groups,instruction_groups,image,total_time,
+                        site_name,source_url,category)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (r["title"], r.get("servings"), r.get("servings_num"),
+                     json.dumps(r.get("ingredients", [])),
+                     json.dumps(r.get("instructions", [])),
+                     json.dumps(ig) if ig else None,
+                     json.dumps(sg) if sg else None,
+                     r.get("image"), r.get("total_time"),
+                     r.get("site_name"), r.get("source_url"), r.get("category")),
+                )
+            conn.commit()
+        finally:
+            conn.close()
         return jsonify({"ok": True, "name": safe, "path": dest_path,
                         "recipeCount": len(recipes)})
     else:

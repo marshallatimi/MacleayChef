@@ -17,6 +17,7 @@
     [data-theme="dark"] {
       --bg: #1c1c1e; --card: #2c2c2e; --border: #3a3a3c;
       --text: #f0f0f0; --muted: #ababab; --header-bg: #7b1e1e;
+      --red: #ff9080; --red-dark: #e87060;
     }
     [data-theme="dark"] .menu-dropdown { background: #2c2c2e; border: 1px solid #3a3a3c; }
     [data-theme="dark"] .menu-dropdown button { color: var(--text); }
@@ -5313,7 +5314,7 @@ window.addEventListener("focus", async () => {
     savedMeals = await (await fetch("/meals")).json();
     updateCatFilter();
     if (document.getElementById("tab-saved") && !document.getElementById("tab-saved").hidden) renderGrid();
-    if (document.getElementById("tab-meals") && !document.getElementById("tab-meals").hidden) renderMealList();
+    if (document.getElementById("tab-meals") && !document.getElementById("tab-meals").hidden) renderMealGrid();
   } catch {}
 });
 
