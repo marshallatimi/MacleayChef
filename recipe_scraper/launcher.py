@@ -273,28 +273,79 @@ def _generate_app_icon() -> str | None:
         return None
 
 
+def _preprocess_html_for_pisa(html: str) -> str:
+    """Replace CSS variables and strip properties pisa can't handle,
+    so xhtml2pdf produces a real PDF instead of an empty file."""
+    import re
+
+    # ── Substitute CSS custom-property references ──────────────────────────
+    # These are the values used by the app's light-mode theme.
+    CSS_VARS = {
+        'var(--text)':    '#1a1a2e',
+        'var(--bg)':      '#f8f9fa',
+        'var(--card)':    '#ffffff',
+        'var(--border)':  '#dee2e6',
+        'var(--muted)':   '#6c757d',
+        'var(--red)':     '#c0392b',
+        'var(--primary)': '#c0392b',
+        'var(--accent)':  '#e74c3c',
+        'var(--shadow)':  'rgba(0,0,0,0.08)',
+        'var(--input-bg)': '#ffffff',
+    }
+    for var, val in CSS_VARS.items():
+        html = html.replace(var, val)
+
+    # Remove any remaining var(…) references pisa can't resolve
+    html = re.sub(r'var\(--[^)]+\)', '', html)
+
+    # Remove CSS custom-property declarations (--foo: bar;)
+    html = re.sub(r'--[\w-]+\s*:[^;]+;', '', html)
+
+    # Strip CSS properties pisa doesn't understand (it chokes on them and
+    # may write 0 bytes).  We target the most common culprits.
+    STRIP_PROPS = [
+        r'display\s*:\s*flex[^;]*',
+        r'display\s*:\s*grid[^;]*',
+        r'flex(?:-wrap|-direction|-flow|-grow|-shrink|-basis|)?\s*:[^;]+',
+        r'grid(?:-template(?:-columns|-rows)?|)?\s*:[^;]+',
+        r'gap\s*:[^;]+',
+        r'column-gap\s*:[^;]+',
+        r'row-gap\s*:[^;]+',
+        r'align-items\s*:[^;]+',
+        r'justify-content\s*:[^;]+',
+        r'place-items\s*:[^;]+',
+        r'backdrop-filter\s*:[^;]+',
+        r'-webkit-backdrop-filter\s*:[^;]+',
+    ]
+    for prop in STRIP_PROPS:
+        html = re.sub(prop + r'\s*;', '', html)
+
+    return html
+
+
 def _pisa_html_to_pdf(html_content: str, pdf_path: str) -> str | None:
     """Render HTML string → pdf_path using xhtml2pdf/pisa (pure Python, no system deps).
     Returns None on success, or an error string on failure.
     """
     try:
         from xhtml2pdf import pisa
-        import io
-        # Suppress pisa's stderr chatter (CSS warnings etc.)
+
+        # Pre-process HTML to remove CSS that causes pisa to emit empty output
+        cleaned = _preprocess_html_for_pisa(html_content)
+
         with open(pdf_path, 'wb') as f:
-            result = pisa.CreatePDF(html_content.encode('utf-8'), dest=f,
-                                    encoding='utf-8', raise_exception=False)
-        # pisa sets result.err to the number of CSS/layout warnings, NOT fatal errors.
-        # A valid PDF is still produced for unsupported CSS (flex, gap, etc.).
-        # Only treat as failure if nothing was written to disk.
+            result = pisa.CreatePDF(cleaned, dest=f, raise_exception=False)
+
+        # pisa.result.err counts warnings, not always fatal errors.
+        # Trust the file: if bytes were written, the PDF is usable.
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
-            return None  # success — even if result.err > 0 (just CSS warnings)
-        # File missing or empty — real failure
+            return None  # success
+        # File missing or empty — genuine failure
         try:
             if os.path.exists(pdf_path): os.unlink(pdf_path)
         except OSError:
             pass
-        return "PDF was empty after generation."
+        return f"PDF was empty after generation (pisa err={result.err})."
     except ImportError:
         return "pisa_not_available"
     except Exception as e:
@@ -307,7 +358,7 @@ def _pisa_html_to_pdf(html_content: str, pdf_path: str) -> str | None:
 
 def _html_to_pdf(html_content: str, pdf_path: str) -> str | None:
     """Render HTML → PDF. Tries xhtml2pdf/pisa first (pure Python, always works),
-    then falls back to Edge headless if pisa is unavailable.
+    then falls back to a Chromium browser if pisa fails.
     Returns None on success, or an error string on failure.
     """
     err = _pisa_html_to_pdf(html_content, pdf_path)
@@ -318,6 +369,7 @@ def _html_to_pdf(html_content: str, pdf_path: str) -> str | None:
             return ("PDF generation failed. Please install Google Chrome or Microsoft Edge "
                     "to enable PDF export.")
         import tempfile
+        from urllib.request import pathname2url
         tmp = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -325,7 +377,8 @@ def _html_to_pdf(html_content: str, pdf_path: str) -> str | None:
             ) as f:
                 f.write(html_content)
                 tmp = f.name
-            file_url = "file:///" + tmp.replace("\\", "/")
+            # pathname2url handles spaces and special characters correctly
+            file_url = "file:///" + pathname2url(tmp).lstrip("/")
             return _edge_html_to_pdf(browser, file_url, pdf_path)
         finally:
             if tmp and os.path.exists(tmp):
