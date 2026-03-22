@@ -702,52 +702,78 @@ def _parse_macleay_pdf_page(page_text: str) -> str:
     understands (Title / Servings: / Ingredients: / Instructions: sections).
     """
     import re
-    lines = [l.strip() for l in page_text.split('\n') if l.strip()]
+
+    # ── 1. Filter browser-injected chrome lines ────────────────────────────────
+    raw_lines = [l.strip() for l in page_text.split('\n') if l.strip()]
+    lines = []
+    for ln in raw_lines:
+        if re.match(r'file://', ln, re.I):                          # browser footer URL
+            continue
+        if re.match(r'^\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2}', ln):  # date/time header
+            continue
+        if re.match(r'^(?:page\s+)?\d+\s*/\s*\d+$', ln, re.I):    # page number "1/1"
+            continue
+        if re.match(r'^Per Serving\s*:', ln, re.I):                 # nutrition
+            continue
+        if re.match(r'^Tot(?:al)?\s+Fat', ln, re.I):
+            continue
+        if re.search(r'mg Sodium.*mg Cholesterol|mg Cholesterol.*mg Sodium', ln, re.I):
+            continue
+        lines.append(ln)
+
     if not lines:
         return ""
 
+    # ── 2. Extract header: title / yield / note / optional source ─────────────
     title = lines[0]
     servings = ""
     note = ""
-    ingredients = []
-    instruction_lines = []
     i = 1
 
-    # Scan header area for Yield:/Note:/source lines
     while i < len(lines):
         line = lines[i]
         if line.lower().startswith("yield:"):
-            servings = line[len("yield:"):].strip()
+            servings = line[6:].strip()
             i += 1
         elif line.lower().startswith("note:"):
-            note = line[len("note:"):].strip()
+            note = line[5:].strip()
             i += 1
         elif i == 1 and len(line) < 60 and not re.match(r'^\d', line):
-            # Likely the site/source name — skip silently (we don't import source)
-            i += 1
+            i += 1  # skip site/source name
         else:
             break
 
-    # Remaining lines: ingredients are short; directions are long prose
-    # The directions are printed as one big joined paragraph, so they'll typically
-    # appear as one or a few long lines at the end.
-    remaining = lines[i:]
+    # ── 3. Split remaining lines: ingredients vs instructions ─────────────────
+    # Instructions are prose — long lines or lines with cooking verbs and sentence endings.
+    COOKING_VERBS = re.compile(
+        r'\b(heat|bake|cook|mix|stir|add|place|combine|preheat|prepare|remove|drain|'
+        r'pour|let|allow|cover|serve|spread|cut|slice|chop|melt|whisk|fold|transfer|'
+        r'refrigerate|freeze|season|bring|simmer|boil|reduce|strain|blend|process|'
+        r'pulse|knead|roll|press|shape|form|coat|dip|layer|arrange|top|sprinkle|'
+        r'garnish|drizzle|brush|rub|marinate|rest|cool|chill|grease|uncover|roast|'
+        r'fry|saute|sauté|grill|broil|steam|microwave)\b', re.I
+    )
 
-    # Walk from the end: collect long prose lines as directions,
-    # then everything else is ingredients.
-    cutoff = len(remaining)
-    for j in range(len(remaining) - 1, -1, -1):
-        ln = remaining[j]
-        # A "direction" line: very long, or ends with a period/question mark
-        if len(ln) > 70 or (len(ln) > 30 and re.search(r'[.!?]$', ln)):
-            cutoff = j
+    ingredients = []
+    instruction_lines = []
+    in_instructions = False
+
+    for ln in lines[i:]:
+        if not in_instructions:
+            is_prose = (
+                len(ln) > 60 or
+                (len(ln) > 25 and re.search(r'\.\s+[A-Z]', ln)) or
+                (ingredients and len(ln) > 30 and COOKING_VERBS.search(ln))
+            )
+            if is_prose:
+                in_instructions = True
+                instruction_lines.append(ln)
+            else:
+                ingredients.append(ln)
         else:
-            break  # stop as soon as we hit a short line from the bottom
+            instruction_lines.append(ln)
 
-    ingredients = remaining[:cutoff]
-    direction_text = " ".join(remaining[cutoff:]).strip()
-
-    # Build output in .txt import format
+    # ── 4. Format output ───────────────────────────────────────────────────────
     out = title + "\n"
     if servings:
         out += f"Servings: {servings}\n"
@@ -757,9 +783,9 @@ def _parse_macleay_pdf_page(page_text: str) -> str:
     for ing in ingredients:
         out += ing + "\n"
     out += "\nInstructions:\n"
-    if direction_text:
-        # Split on sentence boundaries for multi-step readability
-        steps = re.split(r'(?<=[\.\!\?])\s+(?=[A-Z\d])', direction_text)
+    if instruction_lines:
+        instruction_text = " ".join(instruction_lines)
+        steps = re.split(r'(?<=[\.\!\?])\s+(?=[A-Z\d])', instruction_text)
         for step in steps:
             if step.strip():
                 out += step.strip() + "\n"

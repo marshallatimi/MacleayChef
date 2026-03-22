@@ -4134,6 +4134,8 @@ function renderShopBrowser() {
   const shopBrowserMode = appSettings.viewMode || "grid";
   if (shopBrowserMode === "list") {
     browser.className = "list-view";
+    browser.style.maxHeight = "420px";
+    browser.style.overflowY = "auto";
     browser.innerHTML = items.map(item => {
       const badge = item.type === "meal" ? `<span class="meal-badge">MEAL</span> ` : "";
       return `<div class="list-card" onclick="openShopAddModal('${item.type}',${item.id})">
@@ -4146,7 +4148,7 @@ function renderShopBrowser() {
     }).join("");
     return;
   }
-  browser.className = "";
+  browser.className = "shop-browser";
   browser.innerHTML = items.map(item => {
     const thumbHtml = item.image
       ? `<img src="${esc(item.image)}" alt="${esc(item.title)}" style="width:100%;height:90px;object-fit:cover;display:block"/>`
@@ -4600,13 +4602,20 @@ function buildMealRecipesHtml(recipes, factors) {
 }
 
 function formatIngNameFirst(text) {
+  // Recursively strip ALL leading qty+unit pairs so "2 cups 1 tbsp Basil" → "Basil — 2 cups 1 tbsp"
   const NP = '(?:(?:\\d+\\s+)?\\d+\\/\\d+|\\d+(?:\\.\\d+)?)';
   const UL = 'tsps?|teaspoons?|tbsps?|tbls?|tablespoons?|fl\\.?\\s*ozs?|cups?|pints?|pts?|quarts?|qts?|gallons?|gals?|ozs?|ounces?|lbs?|pounds?|kgs?|kilograms?|grams?|g(?=\\b)|mls?|l(?=\\b)';
-  const m = text.match(new RegExp(`^(${NP})(?:\\s*(${UL}))?\\s+(.+)$`, 'i'));
-  if (!m) return text;
-  const qty = m[1], unit = (m[2] || "").trim(), rest = (m[3] || "").trim();
-  const amount = unit ? `${qty} ${unit}` : qty;
-  return `${rest} — ${amount}`;
+  const re = new RegExp(`^(${NP})(?:\\s*(${UL}))?\\s+(.+)$`, 'i');
+  let remaining = text.trim();
+  let amountParts = [];
+  while (true) {
+    const m = remaining.match(re);
+    if (!m) break;
+    amountParts.push(m[1] + (m[2] ? ' ' + m[2].trim() : ''));
+    remaining = m[3];
+  }
+  if (!amountParts.length) return text;
+  return `${remaining} — ${amountParts.join(' ')}`;
 }
 
 // Shared: build shopping list HTML from a list of shoppingList entries (with categories)
@@ -4852,7 +4861,7 @@ function renderGroupMealDetail() {
 
         const expanded = _gmExpandedMeals.has(m.id);
         return `<div class="gm-meal-block">
-          <div class="gm-meal-header${expanded?" open":""}" id="gm-mhdr-${m.id}">
+          <div class="gm-meal-header${expanded?" open":""}" id="gm-mhdr-${m.id}" onclick="toggleGmMeal(${m.id})">
             <span class="gm-meal-chevron">▶</span>
             <span class="gm-meal-name">${esc(m.name)}</span>
             <span class="gm-meal-meta">${rc} recipe${rc!==1?"s":""}</span>
@@ -4914,11 +4923,7 @@ function renderGroupMealDetail() {
       <div id="gm-meal-list" class="detail-scroll-list">${mealRows}</div>
       ${addRow}
     </div></div>`;
-  // Wire up expand/collapse on meal headers (after innerHTML is set)
-  (g.meals||[]).forEach(m => {
-    const hdr = document.getElementById(`gm-mhdr-${m.id}`);
-    if (hdr) hdr.addEventListener("click", () => toggleGmMeal(m.id));
-  });
+  // expand/collapse is now wired via inline onclick on .gm-meal-header
   if (available.length) renderGroupMealBrowser();
 }
 
