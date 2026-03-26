@@ -936,20 +936,56 @@ def parse_text_recipe(text):
     }
 
 
-def _insert_recipes_into_db(db, recipes):
-    """Bulk-insert a list of recipe dicts into an open SQLite connection."""
+def _insert_recipes_into_db(db, recipes, merge=False):
+    """Bulk-insert (or merge-update) a list of recipe dicts into an open SQLite connection.
+
+    When merge=True, recipes whose title already exists in the DB are updated
+    (refreshing content fields and filling any NULL notes) instead of being
+    inserted as duplicates.  New recipes are still inserted normally.
+    Returns (inserted, updated) counts.
+    """
+    inserted = updated = 0
     for r in recipes:
         ig = r.get("ingredient_groups")
         sg = r.get("instruction_groups")
         cats = r.get("categories") or ([r["category"]] if r.get("category") else [])
         category = cats[0] if cats else None
+        title = r.get("title", "Untitled")
+
+        if merge:
+            # Look for an existing recipe with the same title (case-insensitive)
+            row = db.execute(
+                "SELECT id, notes FROM recipes WHERE LOWER(title)=LOWER(?) LIMIT 1",
+                (title,)
+            ).fetchone()
+            if row:
+                existing_id, existing_notes = row["id"], row["notes"]
+                # Update content fields; only overwrite notes when currently blank
+                db.execute(
+                    """UPDATE recipes SET
+                       servings=?, servings_num=?, ingredients=?, instructions=?,
+                       ingredient_groups=?, instruction_groups=?,
+                       notes=COALESCE(NULLIF(?, ''), notes),
+                       updated_at=CURRENT_TIMESTAMP
+                       WHERE id=?""",
+                    (r.get("servings"), r.get("servings_num"),
+                     json.dumps(r.get("ingredients", [])),
+                     json.dumps(r.get("instructions", [])),
+                     json.dumps(ig) if ig else None,
+                     json.dumps(sg) if sg else None,
+                     r.get("notes") or None,
+                     existing_id),
+                )
+                updated += 1
+                continue
+
         db.execute(
             """INSERT INTO recipes
                (title,servings,servings_num,ingredients,instructions,
                 ingredient_groups,instruction_groups,image,total_time,
                 site_name,source_url,category,categories,notes)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (r.get("title", "Untitled"),
+            (title,
              r.get("servings"), r.get("servings_num"),
              json.dumps(r.get("ingredients", [])),
              json.dumps(r.get("instructions", [])),
@@ -960,6 +996,8 @@ def _insert_recipes_into_db(db, recipes):
              category, json.dumps(cats) if cats else None,
              r.get("notes") or None),
         )
+        inserted += 1
+    return inserted, updated
 
 
 @app.route("/recipes/import-peek", methods=["POST"])
@@ -1166,10 +1204,12 @@ def import_recipes_to_current():
         if not recipes:
             return jsonify({"error": "No recipes found in the file."}), 422
 
+        merge = request.form.get("merge") == "1"
         db = get_db()
-        _insert_recipes_into_db(db, recipes)
+        inserted, updated = _insert_recipes_into_db(db, recipes, merge=merge)
         db.commit()
-        return jsonify({"ok": True, "imported": len(recipes)}), 201
+        return jsonify({"ok": True, "imported": inserted + updated,
+                        "inserted": inserted, "updated": updated}), 201
     finally:
         try:
             os.unlink(tmp.name)

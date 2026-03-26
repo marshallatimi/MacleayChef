@@ -748,7 +748,7 @@
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem">
         <div style="font-weight:700;font-size:0.88rem;margin-bottom:0.2rem">📊 CSV Spreadsheet <span style="font-size:0.75rem;color:var(--muted);font-weight:400">(.csv)</span></div>
-        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">Supports two formats: <strong>Macleay Recipe Manager CSV</strong> (exported from this app — full fidelity, preserves photos and all fields) and <strong>AccuChef CSV</strong> (exported from AccuChef — imports title, category, servings, ingredients, and instructions). <strong>All recipes</strong> in the file will be imported.</div>
+        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">Supports two formats: <strong>Macleay Recipe Manager CSV</strong> (exported from this app — full fidelity, preserves photos and all fields) and <strong>AccuChef CSV</strong> (exported from AccuChef — imports title, category, servings, ingredients, instructions, and <strong>notes</strong>). <strong>All recipes</strong> in the file will be imported.</div>
       </div>
     </div>
 
@@ -759,6 +759,14 @@
         <input type="file" id="ir-file-input" accept=".txt,.cookbook,.csv,.pdf" style="display:none" onchange="handleIRFileSelect(this)">
         <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.45rem 1rem" onclick="document.getElementById('ir-file-input').click();event.preventDefault()">Browse…</button>
         <span id="ir-file-name" style="font-size:0.85rem;color:var(--muted)">No file chosen</span>
+      </label>
+    </div>
+
+    <!-- Merge option -->
+    <div id="ir-merge-wrap" style="margin-bottom:0.75rem">
+      <label style="display:flex;align-items:flex-start;gap:0.5rem;cursor:pointer;font-size:0.85rem;color:var(--text)">
+        <input type="checkbox" id="ir-merge-check" style="margin-top:0.18rem;flex-shrink:0">
+        <span><strong>Update existing recipes</strong> — if a recipe with the same title already exists, update it instead of adding a duplicate. <span style="color:var(--muted)">Use this to bring notes and ingredients into previously imported recipes without creating duplicates.</span></span>
       </label>
     </div>
 
@@ -2576,6 +2584,8 @@ function closeImportRecipesModal(e) {
     if (fname) fname.textContent = "No file chosen";
     const finput = document.getElementById("ir-file-input");
     if (finput) finput.value = "";
+    const merge = document.getElementById("ir-merge-check");
+    if (merge) merge.checked = false;
     _irSelectedFile = null;
   }
 }
@@ -2707,8 +2717,10 @@ async function confirmImportRecipes() {
     return;
   }
 
+  const merge = document.getElementById("ir-merge-check")?.checked;
   const form = new FormData();
   form.append("file", _irSelectedFile);
+  if (merge) form.append("merge", "1");
   try {
     const res = await fetch("/recipes/import-file", { method: "POST", body: form });
     const data = await res.json();
@@ -2716,7 +2728,14 @@ async function confirmImportRecipes() {
       closeImportRecipesModal();
       await loadSavedRecipes();
       updateSavedCount(); updateCatFilter(); renderGrid();
-      showToast(`Imported ${data.imported} recipe${data.imported!==1?"s":""}!`);
+      if (merge && data.updated > 0) {
+        const parts = [];
+        if (data.inserted > 0) parts.push(`${data.inserted} new recipe${data.inserted!==1?"s":""} added`);
+        parts.push(`${data.updated} existing recipe${data.updated!==1?"s":""} updated`);
+        showToast(parts.join(", ") + "!");
+      } else {
+        showToast(`Imported ${data.imported} recipe${data.imported!==1?"s":""}!`);
+      }
     } else {
       status.style.color = "var(--red)";
       status.textContent = data.error || "Import failed.";
@@ -4034,7 +4053,7 @@ function renderMealDetail() {
         <div style="font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);margin-bottom:0.35rem">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7">(private, not printed)</span></div>
         <div class="editable-span" contenteditable="true"
           style="font-size:0.88rem;color:var(--text);min-height:1.5em;outline:none;white-space:pre-wrap"
-          oninput="saveMealNotes(${m.id}, this.value)">${esc(m.notes || "")}</div>
+          oninput="saveMealNotes(${m.id}, this.innerText)">${esc(m.notes || "")}</div>
       </div>
       <div class="section-title" style="margin-top:1rem">Recipes</div>
       <div id="meal-recipe-list" class="detail-scroll-list">${recipeRows}</div>
@@ -5608,6 +5627,49 @@ function doPrint(fullHtml) {
 }
 
 const CHANGELOG = [
+  {
+    version: "v1.3.0",
+    notes: [
+      "Import dialog now has an 'Update existing recipes' option — re-import an AccuChef CSV to fill in notes and refresh ingredients without creating duplicates",
+      "Fixed notes not saving on Meals (contenteditable div has no .value; now uses .innerText)",
+      "AccuChef CSV description in import dialog now mentions notes are imported",
+    ]
+  },
+  {
+    version: "v1.2.19",
+    notes: [
+      "Fixed AccuChef dash-prefix ingredients (e.g. '- 1 tsp Salt') breaking salt combining and display in shopping list",
+      "Strip leading dash prefix from ingredients at import time so DB data is clean",
+    ]
+  },
+  {
+    version: "v1.2.18",
+    notes: [
+      "Fixed recipe notes not saving (contenteditable has no .value; now uses .innerText)",
+      "Fixed shopping list sync not firing when recipe was saved (was looking at wrong ID field)",
+      "Fixed salt and other AccuChef ingredients displaying as '1 cup 2 tsp Salt — 1/2 cup' in shopping list",
+    ]
+  },
+  {
+    version: "v1.2.17",
+    notes: [
+      "Editable serving size per recipe in the shopping list",
+      "Multi-section recipe scraping — third fallback now collects all ingredient and instruction sections",
+      "Shopping list category view now correctly combines duplicate ingredients",
+      "Performance: reduced recipe list payload ~40%, added DB indexes, debounced search",
+    ]
+  },
+  {
+    version: "v1.2.16",
+    notes: [
+      "AccuChef CSV import now populates the Notes field on each recipe",
+      "Restore backup no longer overwrites an unrelated cookbook",
+      "Open Backups Folder button added in Settings",
+      "Deleting a .cookbook file externally now removes the entry from the app",
+      "Drag to reorder no longer fires when clicking an ingredient/step text to edit",
+      "Range quantities (e.g. '1–2 tsp') now parse and display correctly",
+    ]
+  },
   {
     version: "v1.2.15",
     notes: [
