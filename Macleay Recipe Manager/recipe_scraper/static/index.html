@@ -1349,15 +1349,20 @@ async function patchRecipe() {
   // Reload meals and group meals to pick up recipe changes
   try { savedMeals = await (await fetch("/meals")).json(); } catch {}
   try { savedGroupMeals = await (await fetch("/group-meals")).json(); } catch {}
-  // Refresh shopping list if it contains this recipe
-  if (shoppingList.some(e => e.recipe_id === selectedRecipe.id)) {
-    const updated = shoppingList.map(e => {
-      if (e.recipe_id !== selectedRecipe.id) return e;
-      const factor = e.servings_factor || 1;
-      const igs = selectedRecipe.ingredient_groups || [{purpose:null, ingredients:selectedRecipe.ingredients||[]}];
-      return {...e, ingredients: igs.flatMap(g => g.ingredients || [])};
+  // Refresh shopping list entries that reference this recipe
+  if (shoppingList.some(e => e.id === selectedRecipe.id)) {
+    const origServ = selectedRecipe.servings_num || parseServingsNumJS(selectedRecipe.servings) || 1;
+    shoppingList = shoppingList.map(e => {
+      if (e.id !== selectedRecipe.id) return e;
+      const curServ = e.currentServings || origServ;
+      const factor = curServ / origServ;
+      const igs = selectedRecipe.ingredient_groups || [{purpose:null, ingredients:[]}];
+      const scaledIngs = igs.flatMap(g => (g.ingredients||[]).map(ing =>
+        Math.abs(factor-1) > 0.01 ? scaleIngredient(ing, factor) : ing
+      ));
+      return {...e, ingredients: scaledIngs, origServings: origServ};
     });
-    shoppingList = updated;
+    saveShoppingListToStorage();
     renderShoppingList();
   }
 }
@@ -2236,7 +2241,7 @@ function buildSavedHTML(r) {
     <div style="font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.8px;color:var(--muted);margin-bottom:0.35rem">Notes <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7">(private, not printed)</span></div>
     <div class="editable-span" contenteditable="true" id="recipe-notes-field"
       style="font-size:0.88rem;color:var(--text);min-height:1.5em;outline:none;white-space:pre-wrap"
-      oninput="saveRecipeNotes(this.value)"
+      oninput="saveRecipeNotes(this.innerText)"
       data-placeholder="Add private notes…">${esc(r.notes || "")}</div>
   </div>`;
 
@@ -4650,6 +4655,19 @@ function parseIngForCombine(text) {
         name = nm[3].trim().replace(/^[,\s]+/, '');
       }
       return { qty: firstNum, unit, name, original: text };
+    }
+  }
+  // Handle name-first format "Salt — 1/2 cup" (produced by formatIngNameFirst or manual entry)
+  // Split on em-dash (U+2014) only to avoid confusing range dashes
+  const emDash = text.indexOf('\u2014');
+  if (emDash > 0) {
+    const namePart = text.slice(0, emDash).trim();
+    const qtyPart  = text.slice(emDash + 1).trim();
+    const m2 = qtyPart.match(QU_RE);
+    if (m2 && !isNaN(parseFraction(m2[1].split(/[-\u2013]/)[0].trim()))) {
+      const firstNum2 = parseFraction(m2[1].split(/[-\u2013]/)[0].trim());
+      const unit2 = m2[2] ? m2[2].trim().toLowerCase().replace(/\s+/g,'') : null;
+      return { qty: firstNum2, unit: unit2, name: namePart, original: text };
     }
   }
   return { qty: null, unit: null, name: text, original: text };
