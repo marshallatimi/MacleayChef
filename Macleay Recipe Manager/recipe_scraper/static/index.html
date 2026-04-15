@@ -1650,6 +1650,14 @@ function makeInlineInput(el, currentVal, onSave, opts={}) {
   });
 }
 
+async function toggleScaleByBatch(checked) {
+  if (!selectedRecipe) return;
+  selectedRecipe.scale_by_batch = checked ? 1 : 0;
+  const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
+  if (idx !== -1) savedRecipes[idx].scale_by_batch = selectedRecipe.scale_by_batch;
+  await patchRecipe();
+}
+
 async function saveRecipeNotes(val) {
   if (!selectedRecipe) return;
   selectedRecipe.notes = val;
@@ -2271,6 +2279,12 @@ function buildSavedHTML(r) {
       </div>
     </div>
     ${notesHtml}
+    <div style="display:flex;align-items:center;gap:0.5rem;margin:0.5rem 0 0.8rem;font-size:0.82rem;color:var(--muted)">
+      <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none" title="When enabled, this recipe will only scale to multiples of its base serving size (e.g. base 15, target 100 → scales to 105)">
+        <input type="checkbox" ${r.scale_by_batch ? 'checked' : ''} onchange="toggleScaleByBatch(this.checked)" style="cursor:pointer;accent-color:var(--primary,#6c63ff)"/>
+        Scale in batches (round up to nearest multiple of base servings)
+      </label>
+    </div>
 
     <div class="section-title">Ingredients</div>
     ${buildIngGroupsEditable(ig)}
@@ -2313,7 +2327,7 @@ const PRINT_CSS = `
   .ings { column-count:2; column-gap:1.6em; margin-bottom:14pt; }
   .ing  { font-size:11pt; line-height:1.35; margin:0 0 1.5pt; break-inside:avoid; }
   .ing-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:0 0 1pt; break-inside:avoid; break-after:avoid; }
-  .directions { font-size:11pt; line-height:1.6; text-align:justify; margin:0 0 4pt 0; }
+  .directions { font-size:11pt; line-height:1.6; text-align:justify; margin:0 0 8pt 0; }
   .dir-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:4pt 0 0; }
   .page-break { page-break-after:always; }
 `;
@@ -2358,8 +2372,9 @@ function buildRecipeBlock(r, factor) {
       stepSections += `<p class="dir-hdr">${escP(g.purpose)}</p>`;
     const steps = (g.steps || []).filter(s => s && s.trim());
     const scaledSteps = isScaled ? steps.map(s => scaleIngredient(s, factor)) : steps;
-    const para = scaledSteps.join(" ").trim();
-    if (para) stepSections += `<p class="directions">${escP(para)}</p>`;
+    scaledSteps.forEach(s => {
+      if (s.trim()) stepSections += `<p class="directions">${escP(s.trim())}</p>`;
+    });
   });
 
   const sourceHtml = r.site_name ? `<div class="source">${escP(r.site_name)}</div>` : "";
@@ -2392,6 +2407,12 @@ ${buildRecipeBlock(r, factor)}
   doPrint(html);
 }
 
+// Round target servings up to the nearest multiple of origNum when scale_by_batch is on.
+function _applyBatchScale(target, origNum, scalByBatch) {
+  if (!scalByBatch || !origNum || origNum <= 0) return target;
+  return Math.ceil(target / origNum) * origNum;
+}
+
 function _mealRecipeFactor(m, mr) {
   // mr is the meal recipe entry (has .recipe_servings, .servings_num, .servings)
   const r = savedRecipes.find(r => r.id === mr.id);
@@ -2400,7 +2421,10 @@ function _mealRecipeFactor(m, mr) {
                           : (m.default_servings != null ? m.default_servings : null);
   if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return 0; // skip signal
   const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-  return (effectiveServings && origNum && origNum > 0) ? effectiveServings / origNum : 1;
+  if (!origNum || origNum <= 0) return 1;
+  if (effectiveServings === null) return 1;
+  const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
+  return target / origNum;
 }
 
 function printMeal() {
@@ -5348,8 +5372,11 @@ function _groupAllRecipes() {
         const effectiveServings = rs[mr.id] != null ? rs[mr.id] : mealServings;
         if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return; // skip 0-serving recipes
         const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-        const factor = (effectiveServings && origNum && origNum > 0)
-                     ? effectiveServings / origNum : 1;
+        let factor = 1;
+        if (effectiveServings && origNum && origNum > 0) {
+          const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
+          factor = target / origNum;
+        }
         results.push({recipe: r, factor});
       }
     });
@@ -5415,7 +5442,11 @@ function buildShoppingHtmlByMeal(g) {
       const r = savedRecipes.find(r => r.id === mr.id);
       if (!r) return;
       const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-      const factor = (effectiveServings && origNum && origNum > 0) ? effectiveServings / origNum : 1;
+      let factor = 1;
+      if (effectiveServings && origNum && origNum > 0) {
+        const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
+        factor = target / origNum;
+      }
       const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
       const scaled = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i);
       ings.push(...scaled);

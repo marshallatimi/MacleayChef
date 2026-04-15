@@ -250,13 +250,14 @@ def init_db():
                 view_count         INTEGER DEFAULT 0,
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at         TIMESTAMP DEFAULT NULL,
-                base_recipe        TEXT    DEFAULT NULL
+                base_recipe        TEXT    DEFAULT NULL,
+                scale_by_batch     INTEGER DEFAULT 0
             )
         """)
         for col in ["ingredient_groups", "instruction_groups", "category TEXT DEFAULT NULL",
                     "view_count INTEGER DEFAULT 0", "categories TEXT DEFAULT NULL",
                     "notes TEXT DEFAULT NULL", "updated_at TIMESTAMP DEFAULT NULL",
-                    "base_recipe TEXT DEFAULT NULL"]:
+                    "base_recipe TEXT DEFAULT NULL", "scale_by_batch INTEGER DEFAULT 0"]:
             try:
                 conn.execute(f"ALTER TABLE recipes ADD COLUMN {col}")
             except Exception:
@@ -1229,8 +1230,8 @@ def save_recipe():
             """INSERT INTO recipes
                (title, servings, servings_num, ingredients, instructions,
                 ingredient_groups, instruction_groups, image, total_time, site_name, source_url, category, categories,
-                base_recipe)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                base_recipe, scale_by_batch)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("title", "Untitled"),
                 data.get("servings"),
@@ -1246,6 +1247,7 @@ def save_recipe():
                 category,
                 json.dumps(cats) if cats else None,
                 data.get("base_recipe") or None,
+                1 if data.get("scale_by_batch") else 0,
             ),
         )
         db.commit()
@@ -1274,7 +1276,7 @@ def update_recipe(rid):
         """UPDATE recipes
            SET title=?, servings=?, servings_num=?, ingredients=?, instructions=?,
                ingredient_groups=?, instruction_groups=?, image=?, total_time=?, site_name=?,
-               source_url=?, category=?, categories=?, notes=?, base_recipe=?,
+               source_url=?, category=?, categories=?, notes=?, base_recipe=?, scale_by_batch=?,
                updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
@@ -1293,6 +1295,7 @@ def update_recipe(rid):
             json.dumps(cats) if cats else None,
             data.get("notes") or None,
             data.get("base_recipe") or None,
+            1 if data.get("scale_by_batch") else 0,
             rid,
         ),
     )
@@ -1372,7 +1375,7 @@ def list_meals():
     placeholders = ",".join("?" * len(meal_ids))
     all_recipes = db.execute(
         f"""SELECT mr.meal_id, r.id, r.title, r.servings, r.servings_num, r.image,
-                   mr.servings AS recipe_servings
+                   r.scale_by_batch, mr.servings AS recipe_servings
             FROM meal_recipes mr JOIN recipes r ON r.id = mr.recipe_id
             WHERE mr.meal_id IN ({placeholders}) ORDER BY mr.meal_id, mr.sort_order""",
         meal_ids,
@@ -1448,7 +1451,8 @@ def copy_meal(mid):
     meal_dict = dict(meal_row)
     meal_dict["categories"] = _parse_categories(meal_dict)
     meal_dict["recipes"] = [dict(r) for r in db.execute(
-        """SELECT r.id, r.title, r.servings, r.servings_num, r.image, mr.servings AS recipe_servings
+        """SELECT r.id, r.title, r.servings, r.servings_num, r.image, r.scale_by_batch,
+                  mr.servings AS recipe_servings
            FROM meal_recipes mr JOIN recipes r ON r.id = mr.recipe_id
            WHERE mr.meal_id = ? ORDER BY mr.sort_order""", (new_id,)
     ).fetchall()]
