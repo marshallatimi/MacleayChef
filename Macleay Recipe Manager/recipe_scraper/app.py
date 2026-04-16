@@ -2416,6 +2416,36 @@ def parse_rm_csv(csv_path):
     return recipes
 
 
+def _split_instructions_into_steps(text):
+    """Split a raw instructions block into individual step strings.
+
+    Priority order:
+    1. Numbered steps  — "1. Do this  2. Do that"  or  "1) …  2) …"
+    2. Newline-separated lines
+    3. Sentence boundaries — period / ! / ? followed by whitespace + uppercase letter
+    Falls back to returning the whole text as a single step if nothing splits cleanly.
+    """
+    if not text or not text.strip():
+        return []
+    text = text.strip()
+
+    # 1 — Numbered steps: split just before "2. " / "3) " etc. (not "2.5" decimals)
+    numbered = re.split(r'(?<!\d)\s+(?=\d+[.)]\s)', text)
+    if len(numbered) > 1:
+        return [s.strip() for s in numbered if s.strip()]
+
+    # 2 — Newline-separated
+    if '\n' in text:
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if len(lines) > 1:
+            return lines
+
+    # 3 — Sentence boundaries: after .!? when followed by whitespace + uppercase letter
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+    steps = [s.strip() for s in sentences if s.strip()]
+    return steps if len(steps) > 1 else [text]
+
+
 def parse_accuchef_csv(csv_path):
     """Parse an AccuChef exported CSV (no header row, 63 fixed columns)."""
     recipes = []
@@ -2450,7 +2480,7 @@ def parse_accuchef_csv(csv_path):
                     current_group["ingredients"].append(clean_ing)
             if current_group["ingredients"] or not ing_groups:
                 ing_groups.append(current_group)
-            step_groups = [{"purpose": None, "steps": [instructions_raw]}] if instructions_raw else [{"purpose": None, "steps": []}]
+            step_groups = [{"purpose": None, "steps": _split_instructions_into_steps(instructions_raw)}]
             flat_ings  = [i for g in ing_groups for i in g["ingredients"]]
             flat_steps = [s for g in step_groups for s in g["steps"]]
             total_time = time_str if time_str and time_str not in (":", "00:00", ":00") else None
