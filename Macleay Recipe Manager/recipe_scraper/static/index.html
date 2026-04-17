@@ -1029,6 +1029,9 @@ let appSettings = {};
 let currentScrape = null;
 let savedRecipes = [];
 let selectedRecipe = null;
+let _recipeHistory = [];     // undo stack — deep-cloned recipe states
+let _prevRecipeState = null; // state as of last save, pushed to history on next edit
+let _recipeUndoing = false;  // guard: don't push to history during an undo restore
 let currentSort = localStorage.getItem("recipeSort") || "newest";
 let currentCatFilter = localStorage.getItem("recipeCatFilter") || "";
 let shoppingList = JSON.parse(localStorage.getItem("shoppingList") || "[]");
@@ -1327,6 +1330,8 @@ function renderGrid() {
 function openRecipe(id) {
   selectedRecipe = savedRecipes.find(r => r.id === id);
   if (!selectedRecipe) return;
+  _recipeHistory = [];
+  _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
   document.getElementById("saved-list-view").hidden = true;
   document.getElementById("saved-detail-view").hidden = false;
   renderSavedDetail();
@@ -1347,6 +1352,12 @@ function renderSavedDetail() {
 
 async function patchRecipe() {
   if (!selectedRecipe) return;
+  // Push previous state onto the undo stack before each save (skip during undo restore)
+  if (!_recipeUndoing && _prevRecipeState && _prevRecipeState.id === selectedRecipe.id) {
+    _recipeHistory.push(_prevRecipeState);
+    if (_recipeHistory.length > 50) _recipeHistory.shift();
+  }
+  _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
   await fetch(`/recipes/${selectedRecipe.id}`, {
     method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(selectedRecipe)
   });
@@ -1648,6 +1659,19 @@ function makeInlineInput(el, currentVal, onSave, opts={}) {
       renderSavedDetail();
     }
   });
+}
+
+async function undoRecipeChange() {
+  if (!selectedRecipe || !_recipeHistory.length) return;
+  const prev = _recipeHistory.pop();
+  selectedRecipe = JSON.parse(JSON.stringify(prev));
+  const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
+  if (idx !== -1) savedRecipes[idx] = {...selectedRecipe};
+  _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
+  _recipeUndoing = true;
+  await patchRecipe();
+  _recipeUndoing = false;
+  renderSavedDetail();
 }
 
 async function toggleScaleByBatch(checked) {
@@ -2323,6 +2347,7 @@ function buildSavedHTML(r) {
     <div class="recipe-toolbar">
       <div class="recipe-toolbar-left">${buildScaler("saved",r)}</div>
       <div class="recipe-toolbar-right">
+        <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="undoRecipeChange()" ${_recipeHistory.length ? '' : 'disabled'} title="Undo last change (${_recipeHistory.length} available)">↩ Undo</button>
         <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printRecipe('saved')">🖨 Print</button>
         <button class="btn btn-dark" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportRecipePdf('saved')">💾 Save PDF</button>
         <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="copyRecipe('saved')">Copy</button>
