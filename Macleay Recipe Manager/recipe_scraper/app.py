@@ -380,6 +380,13 @@ def init_db():
                 )
             """)
 
+        # Shopping settings stored inside the cookbook so they travel with it
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cookbook_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT '{}'
+            )
+        """)
         conn.commit()
 
 
@@ -2011,18 +2018,49 @@ def unlink_cookbook():
 
 @app.route("/shopping/settings", methods=["GET"])
 def get_shopping_settings():
+    """Read shopping settings from the active cookbook (travels with the file).
+    Falls back to the local JSON file for existing installations and migrates
+    the data into the cookbook table on first read."""
+    db = get_db()
+    row = db.execute(
+        "SELECT value FROM cookbook_settings WHERE key='shopping_settings'"
+    ).fetchone()
+    if row:
+        try:
+            return jsonify(json.loads(row[0]))
+        except Exception:
+            pass
+    # Nothing in the cookbook yet — try the legacy JSON file (migration path)
     try:
         with open(SHOPPING_SETTINGS_PATH, encoding="utf-8") as f:
-            return jsonify(json.load(f))
+            data = json.load(f)
+        # Migrate into the cookbook so subsequent reads come from there
+        db.execute(
+            "INSERT OR REPLACE INTO cookbook_settings (key, value) VALUES (?, ?)",
+            ("shopping_settings", json.dumps(data, ensure_ascii=False))
+        )
+        db.commit()
+        return jsonify(data)
     except Exception:
         return jsonify({"ingredient_categories": {}})
 
 
 @app.route("/shopping/settings", methods=["POST"])
 def save_shopping_settings():
+    """Save shopping settings into the active cookbook so they travel with it."""
     data = request.get_json() or {}
-    with open(SHOPPING_SETTINGS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    db = get_db()
+    db.execute(
+        "INSERT OR REPLACE INTO cookbook_settings (key, value) VALUES (?, ?)",
+        ("shopping_settings", json.dumps(data, ensure_ascii=False))
+    )
+    db.commit()
+    # Also keep the local JSON as a backup for older versions
+    try:
+        with open(SHOPPING_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
