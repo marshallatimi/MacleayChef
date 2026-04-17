@@ -4580,16 +4580,15 @@ async function showShopSettings() {
   await loadShopSettings();
   try {
     const rawIngs = await (await fetch("/shopping/ingredients")).json();
-    const keyMap = new Map(); // key → best display text (full raw ingredient string)
+    const keyMap = new Map(); // key → best display name (name only, no qty/unit)
     rawIngs.forEach(raw => {
-      // Strip leading checkbox/bullet/dash characters for display, keep everything else
-      const display = raw.replace(/^[\u25A1\u25A2\u25FB\u25FC\u2610\u2611\u2612\u2713\u2714\s]+/, '')
-        .replace(/^[-–]\s+/, '').trim();
-      const key = ingNameKey(parseIngForCombine(raw).name);
-      if (key && display) {
-        // Prefer the longest display text (most descriptive raw ingredient)
-        if (!keyMap.has(key) || display.length > keyMap.get(key).length) {
-          keyMap.set(key, display);
+      // Extract the name portion (strips leading qty+unit, keeps everything else incl. comma)
+      const name = parseIngForCombine(raw).name;
+      const key = ingNameKey(name);
+      if (key && name) {
+        // Prefer the longest (most descriptive) name for the display label
+        if (!keyMap.has(key) || name.length > keyMap.get(key).length) {
+          keyMap.set(key, name);
         }
       }
     });
