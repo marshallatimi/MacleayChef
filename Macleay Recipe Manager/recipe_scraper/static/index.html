@@ -4580,14 +4580,16 @@ async function showShopSettings() {
   await loadShopSettings();
   try {
     const rawIngs = await (await fetch("/shopping/ingredients")).json();
-    const keyMap = new Map(); // key → best display name
+    const keyMap = new Map(); // key → best display text (full raw ingredient string)
     rawIngs.forEach(raw => {
-      const name = parseIngForCombine(raw).name;
-      const key = ingNameKey(name);
-      if (key) {
-        // Prefer the longest (most descriptive) raw name as display label
-        if (!keyMap.has(key) || name.length > keyMap.get(key).length) {
-          keyMap.set(key, name);
+      // Strip leading checkbox/bullet/dash characters for display, keep everything else
+      const display = raw.replace(/^[\u25A1\u25A2\u25FB\u25FC\u2610\u2611\u2612\u2713\u2714\s]+/, '')
+        .replace(/^[-–]\s+/, '').trim();
+      const key = ingNameKey(parseIngForCombine(raw).name);
+      if (key && display) {
+        // Prefer the longest display text (most descriptive raw ingredient)
+        if (!keyMap.has(key) || display.length > keyMap.get(key).length) {
+          keyMap.set(key, display);
         }
       }
     });
@@ -4669,11 +4671,14 @@ async function saveShopSettings() {
 // Silent auto-save used when category dropdowns change — no toast, no close
 async function _autoSaveShopSettings() {
   try {
-    await fetch("/shopping/settings", {
+    const res = await fetch("/shopping/settings", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify(_shopSettings)
     });
-  } catch {}
+    if (!res.ok) throw new Error("server error");
+  } catch {
+    showToast("⚠️ Category auto-save failed — use the Save button");
+  }
 }
 
 // Store category with a normalised lowercase key and auto-save
