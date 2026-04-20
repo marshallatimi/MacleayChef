@@ -4630,11 +4630,12 @@ function renderShopSettingsList() {
   }
   el.innerHTML = items.map(({key, display, cat: current}) => {
     const opts = SHOP_CATEGORY_NAMES.map(c => `<option value="${esc(c)}"${current===c?" selected":""}>${esc(c)}</option>`).join("");
-    const safeKey = key.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
-    const safeDisplay = display.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+    const safe = s => s.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const safeKey = safe(key);
+    const safeDisplay = safe(display);
     // namePart = just the ingredient name without qty/unit (what the user edits when renaming)
     const namePart = parseIngForCombine(display).name || key;
-    const safeNamePart = namePart.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+    const safeNamePart = safe(namePart);
     return `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.38rem 0.7rem;border-bottom:1px solid var(--border);gap:0.4rem">
       <span style="font-size:0.85rem;flex:1;cursor:pointer;border-radius:4px;padding:0.1rem 0.25rem" title="Click to rename" onclick="renameShopIngredient('${safeKey}', this, '${safeDisplay}', '${safeNamePart}')">${esc(display)}</span>
       <select onchange="setShopCategory('${safeKey}', this.value)"
