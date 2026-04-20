@@ -1747,9 +1747,18 @@ function addIngredientGroup() {
 }
 
 function deleteIngredientGroup(gIdx) {
-  selectedRecipe.ingredient_groups.splice(gIdx, 1);
-  if (!selectedRecipe.ingredient_groups.length)
-    selectedRecipe.ingredient_groups = [{purpose:null, ingredients:[]}];
+  const ig = selectedRecipe.ingredient_groups;
+  const ings = ig[gIdx].ingredients;
+  ig.splice(gIdx, 1);
+  if (!ig.length) {
+    ig.push({purpose: null, ingredients: ings});
+  } else if (gIdx > 0) {
+    // Merge orphaned ingredients up into the group above
+    ig[gIdx - 1].ingredients.push(...ings);
+  } else {
+    // Was first group — merge down into the new first group
+    ig[0].ingredients.unshift(...ings);
+  }
   patchRecipe(); renderSavedDetail();
 }
 
@@ -1788,9 +1797,16 @@ function addInstructionGroup() {
 }
 
 function deleteInstructionGroup(gIdx) {
-  selectedRecipe.instruction_groups.splice(gIdx, 1);
-  if (!selectedRecipe.instruction_groups.length)
-    selectedRecipe.instruction_groups = [{purpose:null, steps:[]}];
+  const sg = selectedRecipe.instruction_groups;
+  const steps = sg[gIdx].steps;
+  sg.splice(gIdx, 1);
+  if (!sg.length) {
+    sg.push({purpose: null, steps});
+  } else if (gIdx > 0) {
+    sg[gIdx - 1].steps.push(...steps);
+  } else {
+    sg[0].steps.unshift(...steps);
+  }
   patchRecipe(); renderSavedDetail();
 }
 
@@ -2067,16 +2083,21 @@ function buildIngGroupsEditable(groups) {
          <button class="del-btn" onclick="deleteIngredient(${gIdx},${iIdx})" title="Remove">✕</button>
        </div>`
     ).join("");
-    const emptyZone = g.ingredients.length === 0
+    // Empty group: show a visible drop target. Non-empty: invisible trailing strip for end-of-group drops.
+    const dropZone = g.ingredients.length === 0
       ? `<div class="ing-row ing-empty-drop" data-gidx="${gIdx}" data-iidx="0"
            ondragover="ingDragOver(event)" ondrop="ingDrop(event)" ondragleave="ingDragLeave(event)"
            style="min-height:2rem;border:1px dashed #aaa;border-radius:4px;margin:0.2rem 0;
                   opacity:0.6;display:flex;align-items:center;justify-content:center;
                   font-size:0.8rem;color:#999;pointer-events:auto">Drop here</div>`
-      : "";
+      : `<div class="ing-trail-drop" data-gidx="${gIdx}" data-iidx="${g.ingredients.length}"
+           ondragover="ingDragOver(event)" ondrop="ingDrop(event)" ondragleave="ingDragLeave(event)"
+           style="height:0.6rem;border-radius:4px;"></div>`;
+    // Show "+ Add ingredient" on named sections and always on the last group (so there's always one).
+    const showAddBtn = g.purpose !== null || gIdx === groups.length - 1;
     return `<div class="ing-group" data-gidx="${gIdx}">
-      ${headerHtml}${items}${emptyZone}
-      <button class="add-item-btn" onclick="addIngredientToGroup(${gIdx})">+ Add ingredient</button>
+      ${headerHtml}${items}${dropZone}
+      ${showAddBtn ? `<button class="add-item-btn" onclick="addIngredientToGroup(${gIdx})">+ Add ingredient</button>` : ""}
     </div>`;
   }).join("");
 }
@@ -2104,16 +2125,19 @@ function buildStepGroupsEditable(groups) {
          <button class="del-btn" onclick="deleteStep(${gIdx},${sIdx})" title="Remove">✕</button>
        </div>`;
     }).join("");
-    const emptyZone = g.steps.length === 0
+    const dropZone = g.steps.length === 0
       ? `<div class="step-row step-empty-drop" data-gidx="${gIdx}" data-sidx="0"
            ondragover="stepDragOver(event)" ondrop="stepDrop(event)" ondragleave="stepDragLeave(event)"
            style="min-height:2rem;border:1px dashed #aaa;border-radius:4px;margin:0.2rem 0;
                   opacity:0.6;display:flex;align-items:center;justify-content:center;
                   font-size:0.8rem;color:#999;pointer-events:auto">Drop here</div>`
-      : "";
+      : `<div class="step-trail-drop" data-gidx="${gIdx}" data-sidx="${g.steps.length}"
+           ondragover="stepDragOver(event)" ondrop="stepDrop(event)" ondragleave="stepDragLeave(event)"
+           style="height:0.6rem;border-radius:4px;"></div>`;
+    const showAddBtn = g.purpose !== null || gIdx === groups.length - 1;
     return `<div class="step-group" data-gidx="${gIdx}">
-      ${headerHtml}${items}${emptyZone}
-      <button class="add-item-btn" onclick="addStepToGroup(${gIdx})">+ Add step</button>
+      ${headerHtml}${items}${dropZone}
+      ${showAddBtn ? `<button class="add-item-btn" onclick="addStepToGroup(${gIdx})">+ Add step</button>` : ""}
     </div>`;
   }).join("");
 }
@@ -5813,6 +5837,14 @@ function doPrint(fullHtml) {
 }
 
 const CHANGELOG = [
+  {
+    version: "v1.3.17",
+    notes: [
+      "Deleting a section title (✕ section) now keeps its ingredients — they merge into the group above (or below if it's the first section)",
+      "Only named sections (and the very last group) show a '+ Add ingredient' button, reducing clutter when sections are split",
+      "Added an invisible trailing drop zone at the end of each ingredient/step group so section headers can be dragged below the last item",
+    ]
+  },
   {
     version: "v1.3.16",
     notes: [
