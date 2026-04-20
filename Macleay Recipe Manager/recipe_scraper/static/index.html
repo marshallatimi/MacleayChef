@@ -1742,7 +1742,7 @@ function addIngredientToGroup(gIdx) {
 }
 
 function addIngredientGroup() {
-  selectedRecipe.ingredient_groups.push({purpose:"New Section", ingredients:["New ingredient"]});
+  selectedRecipe.ingredient_groups.push({purpose:"New Section", ingredients:[]});
   patchRecipe(); renderSavedDetail();
 }
 
@@ -1783,7 +1783,7 @@ function addStepToGroup(gIdx) {
 }
 
 function addInstructionGroup() {
-  selectedRecipe.instruction_groups.push({purpose:"New Section", steps:["New step"]});
+  selectedRecipe.instruction_groups.push({purpose:"New Section", steps:[]});
   patchRecipe(); renderSavedDetail();
 }
 
@@ -2139,21 +2139,26 @@ function ingDrop(e) {
     const [moved] = fromArr.splice(_dragSrc.iIdx, 1);
     ig[toGIdx].ingredients.splice(toIIdx, 0, moved);
   } else if (_dragSrc.type === 'ing-group') {
-    // Section dropped on an ingredient → split the target group at that position.
-    // Ingredients from toIIdx onwards are absorbed into the moved section;
-    // ingredients before toIIdx stay in the original group (which may have no purpose).
+    // Header dropped on an ingredient → moves ONLY the label, all ingredients stay.
+    // Splits the target group at that ingredient; header becomes an empty section there.
     const fromGIdx = _dragSrc.gIdx;
     if (fromGIdx === toGIdx) { _dragSrc = null; return; }
-    const [movedSection] = ig.splice(fromGIdx, 1);
-    const adjToGIdx = fromGIdx < toGIdx ? toGIdx - 1 : toGIdx;
-    const targetGroup = ig[adjToGIdx];
-    const before = targetGroup.ingredients.slice(0, toIIdx);
-    const after  = targetGroup.ingredients.slice(toIIdx);
-    movedSection.ingredients = [...after, ...movedSection.ingredients];
-    if (before.length > 0) {
-      ig.splice(adjToGIdx, 1, {...targetGroup, ingredients: before}, movedSection);
+    const purpose = ig[fromGIdx].purpose;
+    ig[fromGIdx].purpose = null;
+    // Remove source group if now empty+nameless, then adjust target index
+    const srcWasRemoved = ig[fromGIdx].ingredients.length === 0;
+    if (srcWasRemoved) ig.splice(fromGIdx, 1);
+    const adjG = srcWasRemoved && fromGIdx < toGIdx ? toGIdx - 1 : toGIdx;
+    const tg   = ig[adjG];
+    const before = tg.ingredients.slice(0, toIIdx);
+    const after  = tg.ingredients.slice(toIIdx);
+    const newSec = {purpose, ingredients: []};
+    if (before.length && after.length) {
+      ig.splice(adjG, 1, {...tg, ingredients: before}, newSec, {purpose: null, ingredients: after});
+    } else if (before.length) {
+      ig.splice(adjG, 1, {...tg, ingredients: before}, newSec);
     } else {
-      ig.splice(adjToGIdx, 1, movedSection);
+      ig.splice(adjG, 1, newSec, {...tg, ingredients: after});
     }
   } else { _dragSrc = null; return; }
   _dragSrc = null;
@@ -2185,10 +2190,15 @@ function ingGroupDrop(e) {
   if (isNaN(toGIdx)) return;
   const ig = selectedRecipe.ingredient_groups;
   if (_dragSrc.type === 'ing-group') {
+    // Header dropped on another header → moves ONLY the label, all ingredients stay.
     const fromGIdx = _dragSrc.gIdx;
     if (fromGIdx === toGIdx) { _dragSrc = null; return; }
-    const [moved] = ig.splice(fromGIdx, 1);
-    ig.splice(fromGIdx < toGIdx ? toGIdx - 1 : toGIdx, 0, moved);
+    const purpose = ig[fromGIdx].purpose;
+    ig[fromGIdx].purpose = null;
+    const srcWasRemoved = ig[fromGIdx].ingredients.length === 0;
+    if (srcWasRemoved) ig.splice(fromGIdx, 1);
+    const adjTo = srcWasRemoved && fromGIdx < toGIdx ? toGIdx - 1 : toGIdx;
+    ig.splice(adjTo, 0, {purpose, ingredients: []});
   } else if (_dragSrc.type === 'ing') {
     // Ingredient dropped on a section header → move to first position in that section
     const fromArr = ig[_dragSrc.gIdx].ingredients;
@@ -2232,19 +2242,24 @@ function stepDrop(e) {
     const [moved] = fromArr.splice(_dragSrc.sIdx, 1);
     sg[toGIdx].steps.splice(toSIdx, 0, moved);
   } else if (_dragSrc.type === 'step-group') {
-    // Section dropped on a step → split the target group at that position.
+    // Header dropped on a step → moves ONLY the label, all steps stay.
     const fromGIdx = _dragSrc.gIdx;
     if (fromGIdx === toGIdx) { _dragSrc = null; return; }
-    const [movedSection] = sg.splice(fromGIdx, 1);
-    const adjToGIdx = fromGIdx < toGIdx ? toGIdx - 1 : toGIdx;
-    const targetGroup = sg[adjToGIdx];
-    const before = targetGroup.steps.slice(0, toSIdx);
-    const after  = targetGroup.steps.slice(toSIdx);
-    movedSection.steps = [...after, ...movedSection.steps];
-    if (before.length > 0) {
-      sg.splice(adjToGIdx, 1, {...targetGroup, steps: before}, movedSection);
+    const purpose = sg[fromGIdx].purpose;
+    sg[fromGIdx].purpose = null;
+    const srcWasRemoved = sg[fromGIdx].steps.length === 0;
+    if (srcWasRemoved) sg.splice(fromGIdx, 1);
+    const adjG = srcWasRemoved && fromGIdx < toGIdx ? toGIdx - 1 : toGIdx;
+    const tg   = sg[adjG];
+    const before = tg.steps.slice(0, toSIdx);
+    const after  = tg.steps.slice(toSIdx);
+    const newSec = {purpose, steps: []};
+    if (before.length && after.length) {
+      sg.splice(adjG, 1, {...tg, steps: before}, newSec, {purpose: null, steps: after});
+    } else if (before.length) {
+      sg.splice(adjG, 1, {...tg, steps: before}, newSec);
     } else {
-      sg.splice(adjToGIdx, 1, movedSection);
+      sg.splice(adjG, 1, newSec, {...tg, steps: after});
     }
   } else { _dragSrc = null; return; }
   _dragSrc = null;
@@ -2276,10 +2291,15 @@ function stepGroupDrop(e) {
   if (isNaN(toGIdx)) return;
   const sg = selectedRecipe.instruction_groups;
   if (_dragSrc.type === 'step-group') {
+    // Header dropped on another header → moves ONLY the label, all steps stay.
     const fromGIdx = _dragSrc.gIdx;
     if (fromGIdx === toGIdx) { _dragSrc = null; return; }
-    const [moved] = sg.splice(fromGIdx, 1);
-    sg.splice(fromGIdx < toGIdx ? toGIdx - 1 : toGIdx, 0, moved);
+    const purpose = sg[fromGIdx].purpose;
+    sg[fromGIdx].purpose = null;
+    const srcWasRemoved = sg[fromGIdx].steps.length === 0;
+    if (srcWasRemoved) sg.splice(fromGIdx, 1);
+    const adjTo = srcWasRemoved && fromGIdx < toGIdx ? toGIdx - 1 : toGIdx;
+    sg.splice(adjTo, 0, {purpose, steps: []});
   } else if (_dragSrc.type === 'step') {
     // Step dropped on a section header → move to first position in that section
     const fromArr = sg[_dragSrc.gIdx].steps;
