@@ -5030,7 +5030,13 @@ function combineIngredients(allIngredients) {
       if (cat === '__unparsed__') {
         // Drop bare no-qty entries when measured entries already exist for this ingredient;
         // the total already covers the shopping need.
-        if (!hasQuantified) subItems.forEach(p => result.push(p.original));
+        // When only bare entries exist, deduplicate: push one representative
+        // (longest = most descriptive name variant) instead of one per recipe.
+        if (!hasQuantified) {
+          const best = subItems.reduce((a, b) =>
+            a.original.length >= b.original.length ? a : b);
+          result.push(best.original);
+        }
       } else {
         result.push(subItems.length === 1 ? subItems[0].original : mergeIngItems(subItems));
       }
