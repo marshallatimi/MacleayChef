@@ -4971,16 +4971,40 @@ function mergeIngItems(items) {
 }
 
 function combineIngredients(allIngredients) {
+  const nu = u => u ? u.toLowerCase().replace(/\s+/g,'') : null;
+  function unitCategory(p) {
+    if (p.qty === null || isNaN(p.qty)) return '__unparsed__';
+    if (!p.unit) return 'count';
+    const u = nu(p.unit);
+    if (VOL_TSP[u] !== undefined) return 'volume';
+    if (WT_OZ[u]   !== undefined) return 'weight';
+    return 'other:' + u; // group each unique unknown unit separately
+  }
   const parsed = allIngredients.map(parseIngForCombine);
-  const groups = new Map();
+  // Group by ingredient name key
+  const nameGroups = new Map();
   parsed.forEach(p => {
     const key = ingNameKey(p.name);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p);
+    if (!nameGroups.has(key)) nameGroups.set(key, []);
+    nameGroups.get(key).push(p);
   });
   const result = [];
-  groups.forEach(items => {
-    result.push(items.length === 1 ? items[0].original : mergeIngItems(items));
+  nameGroups.forEach(items => {
+    if (items.length === 1) { result.push(items[0].original); return; }
+    // Sub-group by unit category so volumes merge together, weights together, etc.
+    const subGroups = new Map();
+    items.forEach(p => {
+      const cat = unitCategory(p);
+      if (!subGroups.has(cat)) subGroups.set(cat, []);
+      subGroups.get(cat).push(p);
+    });
+    subGroups.forEach((subItems, cat) => {
+      if (cat === '__unparsed__') {
+        subItems.forEach(p => result.push(p.original));
+      } else {
+        result.push(subItems.length === 1 ? subItems[0].original : mergeIngItems(subItems));
+      }
+    });
   });
   return result;
 }
