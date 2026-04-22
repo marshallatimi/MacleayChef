@@ -5086,7 +5086,9 @@ function buildShoppingHtml(listEntries, title) {
   const categorized = categorizeShopping(combined);
   const catSections = [...SHOP_CATEGORY_NAMES].sort((a,b)=>a.localeCompare(b)).filter(cat => categorized[cat] && categorized[cat].length)
     .map(cat => {
-      const sorted = [...categorized[cat]].sort((a, b) => stripQty(a).localeCompare(stripQty(b)));
+      const sorted = [...categorized[cat]].sort((a, b) =>
+        ingNameKey(parseIngForCombine(a).name || stripQty(a))
+          .localeCompare(ingNameKey(parseIngForCombine(b).name || stripQty(b))));
       return `<div class="cat-section">
   <div class="cat-header">${escP(cat)}</div>
   ${sorted.map(i => `<div class="ing">___ ${escP(formatIngNameFirst(i))}</div>`).join("\n  ")}
