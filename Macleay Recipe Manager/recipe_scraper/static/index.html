@@ -1543,7 +1543,8 @@ async function patchMeal() {
   if (!selectedMeal) return;
   await fetch(`/meals/${selectedMeal.id}`, {
     method:"PUT", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({name: selectedMeal.name, categories: selectedMeal.categories || [], category: selectedMeal.category})
+    body: JSON.stringify({name: selectedMeal.name, categories: selectedMeal.categories || [], category: selectedMeal.category,
+      notes: selectedMeal.notes || null, default_servings: selectedMeal.default_servings || null})
   });
   const idx = savedMeals.findIndex(m => m.id === selectedMeal.id);
   if (idx !== -1) savedMeals[idx] = {...selectedMeal};
@@ -4375,7 +4376,7 @@ async function updateMealDefaultServings(val) {
   await fetch(`/meals/${m.id}`, {
     method:"PUT", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name: m.name, default_servings: ds,
-      categories: m.categories||[], category: m.category||null})
+      categories: m.categories||[], category: m.category||null, notes: m.notes||null})
   });
   // Update placeholder text on per-recipe inputs without full re-render
   m.recipes.forEach(r => {
