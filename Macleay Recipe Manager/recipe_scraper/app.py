@@ -391,14 +391,16 @@ def init_db():
         """)
         # One-time migration: populate directions_text from instruction_groups / instructions
         # for any recipe that has structured steps but no plain-text directions yet.
+        # Note: init_db uses a plain sqlite3 connection (no row_factory), so rows are tuples.
         rows = conn.execute(
             "SELECT id, instruction_groups, instructions FROM recipes WHERE directions_text IS NULL"
         ).fetchall()
         for row in rows:
+            rid, ig_json, instr_json = row[0], row[1], row[2]
             text = None
-            if row["instruction_groups"]:
+            if ig_json:
                 try:
-                    groups = json.loads(row["instruction_groups"])
+                    groups = json.loads(ig_json)
                     lines = []
                     for g in groups:
                         if g.get("purpose"):
@@ -409,15 +411,15 @@ def init_db():
                     text = "\n".join(lines) or None
                 except Exception:
                     pass
-            if not text and row["instructions"]:
+            if not text and instr_json:
                 try:
-                    steps = json.loads(row["instructions"])
+                    steps = json.loads(instr_json)
                     lines = [s.strip() for s in steps if s.strip()]
                     text = "\n".join(lines) or None
                 except Exception:
                     pass
             if text:
-                conn.execute("UPDATE recipes SET directions_text=? WHERE id=?", (text, row["id"]))
+                conn.execute("UPDATE recipes SET directions_text=? WHERE id=?", (text, rid))
         conn.commit()
 
 
