@@ -243,6 +243,16 @@
     .ing-group { margin-bottom:0; }
     .step-group { margin-bottom:0; }
 
+    .directions-edit {
+      width:100%; min-height:180px; resize:vertical;
+      border:1px solid var(--border); border-radius:6px;
+      padding:0.5rem 0.6rem; font-size:0.95rem; font-family:inherit;
+      line-height:1.55; background:var(--card); color:var(--text);
+      box-sizing:border-box; outline:none; margin-top:0.2rem;
+      transition:border-color 0.2s;
+    }
+    .directions-edit:focus { border-color:var(--red); }
+
     .saved-toast { position:fixed; bottom:1.5rem; right:1.5rem; background:#155724; color:#fff; padding:0.6rem 1.2rem; border-radius:8px; font-size:0.9rem; font-weight:600; opacity:0; transition:opacity 0.3s; pointer-events:none; z-index:999; }
     .saved-toast.show { opacity:1; }
 
@@ -1698,6 +1708,21 @@ async function saveRecipeNotes(val) {
   }, 600);
 }
 
+async function saveDirectionsText(val) {
+  if (!selectedRecipe) return;
+  selectedRecipe.directions_text = val;
+  const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
+  if (idx !== -1) savedRecipes[idx].directions_text = val;
+  clearTimeout(saveDirectionsText._t);
+  saveDirectionsText._t = setTimeout(async () => {
+    await fetch(`/recipes/${selectedRecipe.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...selectedRecipe }),
+    });
+  }, 600);
+}
+
 function inlineEditTitle(el) {
   makeInlineInput(el, selectedRecipe.title || "", val => {
     if (val) selectedRecipe.title = val;
@@ -2403,7 +2428,7 @@ function buildScrapeHTML(r) {
     <div class="section-title">Ingredients</div>
     ${buildIngGroupsReadonly(ig,"scrape")}
     <div class="section-title">Directions</div>
-    ${buildStepGroupsReadonly(sg)}
+    <pre style="white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:0.95rem;line-height:1.55;margin:0">${esc(r.directions_text || "")}</pre>
   </div></div>`;
 }
 
@@ -2464,9 +2489,9 @@ function buildSavedHTML(r) {
     <button class="add-section-btn" onclick="addIngredientGroup()">+ Add section</button>
 
     <div class="section-title">Directions</div>
-    ${buildStepGroupsEditable(sg)}
-    <button class="add-item-btn" onclick="addStepToGroup(${sg.length - 1})">+ Add step</button>
-    <button class="add-section-btn" onclick="addInstructionGroup()">+ Add section</button>
+    <textarea class="directions-edit" placeholder="Type your directions here…"
+      oninput="saveDirectionsText(this.value)"
+    >${esc(r.directions_text || "")}</textarea>
 
     <p style="font-size:0.78rem;color:var(--muted);margin-top:0.6rem">Click any field to edit it</p>
   </div></div>`;
@@ -2499,6 +2524,7 @@ const PRINT_CSS = `
   .ing-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:0 0 1pt; break-inside:avoid; break-after:avoid; }
   .directions { font-size:11pt; line-height:1.45; text-align:justify; margin:0 0 3pt 0; }
   .dir-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:4pt 0 0; }
+  .directions-text { font-size:11pt; line-height:1.55; white-space:pre-wrap; word-break:break-word; margin:0; }
   .page-break { page-break-after:always; }
 `;
 
@@ -2511,9 +2537,7 @@ function buildRecipeBlock(r, factor) {
   const ig = isScaled ? rawIg.map(g => ({
     ...g, ingredients: (g.ingredients||[]).map(ing => scaleIngredient(ing, factor))
   })) : rawIg;
-  const sg = r.instruction_groups || [{purpose:null, steps:r.instructions||[]}];
   const multiIngGroup = ig.length > 1 || (ig[0] && ig[0].purpose);
-  const multiStepGroup = sg.length > 1 || (sg[0] && sg[0].purpose);
 
   let printServings = r.servings || "";
   const origServings = r.servings_num || parseServingsNumJS(r.servings);
@@ -2535,17 +2559,9 @@ function buildRecipeBlock(r, factor) {
   });
   const ingSections = `<div class="ings">${ingItems}</div>`;
 
-  // Directions — scale measurements in step text when factor != 1
-  let stepSections = "";
-  sg.forEach(g => {
-    if (multiStepGroup && g.purpose)
-      stepSections += `<p class="dir-hdr">${escP(g.purpose)}</p>`;
-    const steps = (g.steps || []).filter(s => s && s.trim());
-    const scaledSteps = isScaled ? steps.map(s => scaleIngredient(s, factor)) : steps;
-    scaledSteps.forEach(s => {
-      if (s.trim()) stepSections += `<p class="directions">${escP(s.trim())}</p>`;
-    });
-  });
+  // Directions — plain text block (white-space:pre-wrap preserves newlines/indentation)
+  const dirText = (r.directions_text || "").trim();
+  const stepSections = dirText ? `<div class="directions-text">${escP(dirText)}</div>` : "";
 
   const sourceHtml = r.site_name ? `<div class="source">${escP(r.site_name)}</div>` : "";
   const yieldHtml  = printServings ? `<div class="yield">Yield: ${escP(printServings)}</div>` : "";

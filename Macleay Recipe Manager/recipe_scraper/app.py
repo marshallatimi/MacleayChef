@@ -251,13 +251,15 @@ def init_db():
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at         TIMESTAMP DEFAULT NULL,
                 base_recipe        TEXT    DEFAULT NULL,
-                scale_by_batch     INTEGER DEFAULT 0
+                scale_by_batch     INTEGER DEFAULT 0,
+                directions_text    TEXT    DEFAULT NULL
             )
         """)
         for col in ["ingredient_groups", "instruction_groups", "category TEXT DEFAULT NULL",
                     "view_count INTEGER DEFAULT 0", "categories TEXT DEFAULT NULL",
                     "notes TEXT DEFAULT NULL", "updated_at TIMESTAMP DEFAULT NULL",
-                    "base_recipe TEXT DEFAULT NULL", "scale_by_batch INTEGER DEFAULT 0"]:
+                    "base_recipe TEXT DEFAULT NULL", "scale_by_batch INTEGER DEFAULT 0",
+                    "directions_text TEXT DEFAULT NULL"]:
             try:
                 conn.execute(f"ALTER TABLE recipes ADD COLUMN {col}")
             except Exception:
@@ -387,6 +389,35 @@ def init_db():
                 value TEXT NOT NULL DEFAULT '{}'
             )
         """)
+        # One-time migration: populate directions_text from instruction_groups / instructions
+        # for any recipe that has structured steps but no plain-text directions yet.
+        rows = conn.execute(
+            "SELECT id, instruction_groups, instructions FROM recipes WHERE directions_text IS NULL"
+        ).fetchall()
+        for row in rows:
+            text = None
+            if row["instruction_groups"]:
+                try:
+                    groups = json.loads(row["instruction_groups"])
+                    lines = []
+                    for g in groups:
+                        if g.get("purpose"):
+                            lines.append(g["purpose"])
+                        for step in g.get("steps", []):
+                            if step.strip():
+                                lines.append(step.strip())
+                    text = "\n".join(lines) or None
+                except Exception:
+                    pass
+            if not text and row["instructions"]:
+                try:
+                    steps = json.loads(row["instructions"])
+                    lines = [s.strip() for s in steps if s.strip()]
+                    text = "\n".join(lines) or None
+                except Exception:
+                    pass
+            if text:
+                conn.execute("UPDATE recipes SET directions_text=? WHERE id=?", (text, row["id"]))
         conn.commit()
 
 
@@ -640,14 +671,16 @@ def _extract_jsonld_recipe(html, url):
             title = str(item.get('name', '') or '').strip()
             if not title and not ingredients:
                 continue
+            flat_steps = flatten_groups(instruction_groups, "steps")
             return {
                 "title": title,
                 "servings": servings,
                 "servings_num": parse_servings_num(servings),
                 "ingredients": ingredients,
-                "instructions": flatten_groups(instruction_groups, "steps"),
+                "instructions": flat_steps,
                 "ingredient_groups": ingredient_groups,
                 "instruction_groups": instruction_groups,
+                "directions_text": "\n".join(s.strip() for s in flat_steps if s.strip()) or None,
                 "image": image,
                 "total_time": total_time,
                 "site_name": domain,
@@ -748,14 +781,16 @@ def _extract_html_generic(html, url):
 
     ig = [{"purpose": None, "ingredients": ingredients}]
     instruction_groups = parse_instruction_groups(steps)
+    flat_steps = flatten_groups(instruction_groups, "steps")
     return {
         "title": title or "",
         "servings": servings or "",
         "servings_num": parse_servings_num(servings or ""),
         "ingredients": ingredients,
-        "instructions": flatten_groups(instruction_groups, "steps"),
+        "instructions": flat_steps,
         "ingredient_groups": ig,
         "instruction_groups": instruction_groups,
+        "directions_text": "\n".join(s.strip() for s in flat_steps if s.strip()) or None,
         "image": None,
         "total_time": None,
         "site_name": domain,
@@ -779,14 +814,16 @@ def scrape():
         servings = safe_call(scraper.yields)
         ingredient_groups = get_ingredient_groups(scraper)
         instruction_groups = get_instruction_groups(scraper)
+        flat_steps = flatten_groups(instruction_groups, "steps")
         recipe = {
             "title": safe_call(scraper.title),
             "servings": servings,
             "servings_num": parse_servings_num(servings),
             "ingredients": flatten_groups(ingredient_groups, "ingredients"),
-            "instructions": flatten_groups(instruction_groups, "steps"),
+            "instructions": flat_steps,
             "ingredient_groups": ingredient_groups,
             "instruction_groups": instruction_groups,
+            "directions_text": "\n".join(s.strip() for s in flat_steps if s.strip()) or None,
             "image": safe_call(scraper.image),
             "total_time": safe_call(scraper.total_time),
             "site_name": safe_call(scraper.site_name),
@@ -972,7 +1009,7 @@ def _insert_recipes_into_db(db, recipes, merge=False):
                 db.execute(
                     """UPDATE recipes SET
                        servings=?, servings_num=?, ingredients=?, instructions=?,
-                       ingredient_groups=?, instruction_groups=?,
+                       ingredient_groups=?, instruction_groups=?, directions_text=?,
                        notes=COALESCE(NULLIF(?, ''), notes),
                        updated_at=CURRENT_TIMESTAMP
                        WHERE id=?""",
@@ -981,6 +1018,7 @@ def _insert_recipes_into_db(db, recipes, merge=False):
                      json.dumps(r.get("instructions", [])),
                      json.dumps(ig) if ig else None,
                      json.dumps(sg) if sg else None,
+                     r.get("directions_text") or None,
                      r.get("notes") or None,
                      existing_id),
                 )
@@ -991,8 +1029,8 @@ def _insert_recipes_into_db(db, recipes, merge=False):
             """INSERT INTO recipes
                (title,servings,servings_num,ingredients,instructions,
                 ingredient_groups,instruction_groups,image,total_time,
-                site_name,source_url,category,categories,notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                site_name,source_url,category,categories,notes,directions_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (title,
              r.get("servings"), r.get("servings_num"),
              json.dumps(r.get("ingredients", [])),
@@ -1002,7 +1040,8 @@ def _insert_recipes_into_db(db, recipes, merge=False):
              r.get("image"), r.get("total_time"),
              r.get("site_name"), r.get("source_url"),
              category, json.dumps(cats) if cats else None,
-             r.get("notes") or None),
+             r.get("notes") or None,
+             r.get("directions_text") or None),
         )
         inserted += 1
     return inserted, updated
@@ -1284,7 +1323,7 @@ def update_recipe(rid):
            SET title=?, servings=?, servings_num=?, ingredients=?, instructions=?,
                ingredient_groups=?, instruction_groups=?, image=?, total_time=?, site_name=?,
                source_url=?, category=?, categories=?, notes=?, base_recipe=?, scale_by_batch=?,
-               updated_at=CURRENT_TIMESTAMP
+               directions_text=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             data.get("title"),
@@ -1303,6 +1342,7 @@ def update_recipe(rid):
             data.get("notes") or None,
             data.get("base_recipe") or None,
             1 if data.get("scale_by_batch") else 0,
+            data.get("directions_text") or None,
             rid,
         ),
     )
@@ -2529,18 +2569,17 @@ def parse_accuchef_csv(csv_path):
                     current_group["ingredients"].append(clean_ing)
             if current_group["ingredients"] or not ing_groups:
                 ing_groups.append(current_group)
-            step_groups = [{"purpose": None, "steps": _split_instructions_into_steps(instructions_raw)}]
             flat_ings  = [i for g in ing_groups for i in g["ingredients"]]
-            flat_steps = [s for g in step_groups for s in g["steps"]]
             total_time = time_str if time_str and time_str not in (":", "00:00", ":00") else None
             recipes.append({
                 "title":              title,
                 "servings":           servings,
                 "servings_num":       parse_servings_num(servings_str),
                 "ingredients":        flat_ings,
-                "instructions":       flat_steps,
+                "instructions":       [],
                 "ingredient_groups":  ing_groups,
-                "instruction_groups": step_groups,
+                "instruction_groups": None,
+                "directions_text":    instructions_raw or None,
                 "image":              None,
                 "total_time":         total_time,
                 "site_name":          "AccuChef Import",
