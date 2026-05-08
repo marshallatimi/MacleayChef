@@ -1984,7 +1984,8 @@ const WT_OZ = { oz:1, ozs:1, ounce:1, ounces:1, lb:16, lbs:16, pound:16, pounds:
 
 /** Strip ~ marker for display (recipe view & print). */
 function dispIng(text) {
-  return (text || '').startsWith('~') ? text.slice(1) : text;
+  // Strip ~ wherever it appears — used as a "don't scale this number" marker
+  return (text || '').replace(/~/g, '');
 }
 
 /** Strip ~ marker AND parenthetical alternates for the shopping list. */
@@ -1993,7 +1994,7 @@ function shopIng(text) {
 }
 
 function scaleIngredient(text, factor) {
-  // ~ prefix = fixed descriptor; strip marker, return without scaling
+  // ~ at start = whole ingredient is a fixed descriptor; strip ~ and return unscaled
   if ((text || '').startsWith('~')) return text.slice(1);
 
   const MARK = "\x01";
@@ -2029,6 +2030,11 @@ function scaleIngredient(text, factor) {
       return MARK + cvt(val, sunit) + MARK;
     }
   });
+
+  // Between pass 1 and pass 2: protect any inline ~NUMBER patterns from being scaled.
+  // e.g. "1 Box Churros ~10"" → the 10 is a fixed size descriptor, not a quantity.
+  // The ~ is stripped from display; the number is shielded from pass 2 by MARK wrapping.
+  result = result.replace(/~(\d+(?:[.\/ ]\d+)*)/g, (_, num) => MARK + num.trim() + MARK);
 
   // Pass 2: scale remaining plain numbers (outside MARK-protected regions)
   const parts = result.split(MARK);
