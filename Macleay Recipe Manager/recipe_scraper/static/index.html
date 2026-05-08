@@ -1924,7 +1924,7 @@ function initScaler(ctx, recipe) {
     const defBtn = document.getElementById(`make-default-btn-${ctx}`);
     if (defBtn) defBtn.hidden = !isScaled;
     document.querySelectorAll(`[data-ctx="${ctx}"][data-orig]`).forEach(el => {
-      el.textContent = isScaled ? scaleIngredient(el.dataset.orig, factor) : el.dataset.orig;
+      el.textContent = isScaled ? scaleIngredient(el.dataset.orig, factor) : dispIng(el.dataset.orig);
     });
   });
 }
@@ -1977,7 +1977,25 @@ const VOL_TSP = { tsp:1, tsps:1, teaspoon:1, teaspoons:1,
 const WT_OZ = { oz:1, ozs:1, ounce:1, ounces:1, lb:16, lbs:16, pound:16, pounds:16,
   g:0.03527, gram:0.03527, grams:0.03527, kg:35.274, kilogram:35.274, kilograms:35.274 };
 
+// ── Ingredient display helpers ────────────────────────────────────────────────
+// Prefix ~ on an ingredient means "fixed quantity — do not scale".
+// Parenthetical alternate units, e.g. "10lbs (40 cups) Cheese", are shown in the
+// recipe but stripped from the shopping list so only the primary quantity appears.
+
+/** Strip ~ marker for display (recipe view & print). */
+function dispIng(text) {
+  return (text || '').startsWith('~') ? text.slice(1) : text;
+}
+
+/** Strip ~ marker AND parenthetical alternates for the shopping list. */
+function shopIng(text) {
+  return dispIng(text).replace(/\s*\([^)]*\)/g, '').trim();
+}
+
 function scaleIngredient(text, factor) {
+  // ~ prefix = fixed descriptor; strip marker, return without scaling
+  if ((text || '').startsWith('~')) return text.slice(1);
+
   const MARK = "\x01";
   const NP = '(?:(?:\\d+\\s+)?\\d+\\/\\d+|\\d+(?:\\.\\d+)?)';
   const UL = 'tsps?|teaspoons?|tbsps?|tbls?|tablespoons?|fl\\.?\\s*ozs?|cups?|pints?|pts?|quarts?|qts?|gallons?|gals?|ozs?|ounces?|lbs?|pounds?|kgs?|kilograms?|grams?|g(?=\\b)';
@@ -2141,7 +2159,7 @@ function buildIngGroupsReadonly(groups, ctx) {
   return groups.map(g => {
     const header = (multiGroup && g.purpose) ? `<div class="group-header">${esc(g.purpose)}</div>` : "";
     const items = g.ingredients.map(ing =>
-      `<li><span data-ctx="${ctx}" data-orig="${esc(ing)}">${esc(ing)}</span></li>`
+      `<li><span data-ctx="${ctx}" data-orig="${esc(ing)}">${esc(dispIng(ing))}</span></li>`
     ).join("");
     return `${header}<ul class="ingredients-list" style="margin-bottom:0.3rem">${items}</ul>`;
   }).join("");
@@ -2176,7 +2194,7 @@ function buildIngGroupsEditable(groups) {
       `<div class="ing-row" draggable="true" data-gidx="${gIdx}" data-iidx="${iIdx}"
          ondragstart="ingDragStart(event)" ondragover="ingDragOver(event)"
          ondrop="ingDrop(event)" ondragleave="ingDragLeave(event)">
-         <span class="ing-text" data-ctx="saved" data-orig="${esc(ing)}" onclick="inlineEditIng(this,${gIdx},${iIdx})" title="Click to edit">${esc(ing)}</span>
+         <span class="ing-text" data-ctx="saved" data-orig="${esc(ing)}" onclick="inlineEditIng(this,${gIdx},${iIdx})" title="Click to edit">${esc(dispIng(ing))}</span>
          <button class="del-btn" onclick="deleteIngredient(${gIdx},${iIdx})" title="Remove">✕</button>
        </div>`
     ).join("");
@@ -2625,7 +2643,7 @@ function buildRecipeBlock(r, factor) {
     if (multiIngGroup && g.purpose)
       ingItems += `<div class="ing-hdr">${escP(g.purpose)}</div>`;
     (g.ingredients || []).filter(t => t && t.trim()).forEach(t => {
-      ingItems += `<div class="ing">${escP(t)}</div>`;
+      ingItems += `<div class="ing">${escP(dispIng(t))}</div>`;
     });
   });
   const ingSections = `<div class="ings">${ingItems}</div>`;
@@ -4646,7 +4664,7 @@ async function confirmShopAdd() {
     const factor = servings / origServings;
     const ig = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
     const scaledIngredients = ig.flatMap(g =>
-      (g.ingredients||[]).map(ing => Math.abs(factor-1)>0.01 ? scaleIngredient(ing, factor) : ing)
+      (g.ingredients||[]).map(ing => shopIng(Math.abs(factor-1)>0.01 ? scaleIngredient(ing, factor) : ing))
     );
     const servingsLabel = r.servings
       ? r.servings.replace(/\d+(\.\d+)?/, formatNum(servings))
@@ -4699,7 +4717,7 @@ function rescaleShoppingEntry(idx, newServingsStr) {
   const factor = newServings / origServ;
   const ig = r.ingredient_groups || [{purpose:null, ingredients: r.ingredients||[]}];
   entry.ingredients = ig.flatMap(g =>
-    (g.ingredients||[]).map(ing => Math.abs(factor-1)>0.01 ? scaleIngredient(ing, factor) : ing)
+    (g.ingredients||[]).map(ing => shopIng(Math.abs(factor-1)>0.01 ? scaleIngredient(ing, factor) : ing))
   );
   entry.currentServings = newServings;
   entry.origServings = origServ;
@@ -6036,8 +6054,8 @@ function _groupShoppingEntries() {
     const ings = igs.flatMap(g => (g.ingredients||[]).filter(t => t && t.trim()));
     // If factor != 1, scale via scaleIngredient (same helper used by the serving scaler)
     const scaled = factor !== 1 && typeof scaleIngredient === "function"
-      ? ings.map(i => scaleIngredient(i, factor))
-      : ings;
+      ? ings.map(i => shopIng(scaleIngredient(i, factor)))
+      : ings.map(shopIng);
     return { label: r.title, ingredients: scaled };
   });
 }
@@ -6086,7 +6104,7 @@ function buildShoppingHtmlByMeal(g) {
       let factor = 1;
       if (effectiveServings && origNum && origNum > 0) factor = parseFloat(effectiveServings) / origNum;
       const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
-      const ings = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i);
+      const ings = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => shopIng(factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i));
       if (ings.length) sections.push({mealName: r.title, ingredients: ings});
       return;
     }
@@ -6110,7 +6128,7 @@ function buildShoppingHtmlByMeal(g) {
         factor = target / origNum;
       }
       const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
-      const scaled = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i);
+      const scaled = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => shopIng(factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i));
       ings.push(...scaled);
     });
     if (ings.length) sections.push({mealName: full.name, ingredients: ings});
