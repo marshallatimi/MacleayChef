@@ -5661,7 +5661,7 @@ function renderGroupMealRecipeBrowser() {
   const q = (document.getElementById("gm-recipe-search")?.value || "").toLowerCase();
   const matches = savedRecipes.filter(r => !q || (r.title||"").toLowerCase().includes(q));
   browser.innerHTML = matches.length
-    ? matches.slice(0, 60).map(r => `
+    ? matches.map(r => `
         <div class="shop-recipe-row" onclick="addRecipeToGroupMeal(${r.id})">
           ${r.image ? `<img class="shop-recipe-thumb" src="${esc(r.image)}" loading="lazy"/>` : `<div class="shop-recipe-thumb-placeholder">🍽️</div>`}
           <div class="shop-recipe-info">
