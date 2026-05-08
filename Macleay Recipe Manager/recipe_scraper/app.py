@@ -1636,8 +1636,10 @@ def add_recipe_to_group(gid):
     if not rid:
         return jsonify({"error": "recipe_id required"}), 400
     db  = get_db()
+    # Use meal_id=0 as sentinel so NOT NULL constraint on older DBs is satisfied.
+    # meal_id=0 never matches a real meal in the LEFT JOIN.
     cur = db.execute(
-        "INSERT INTO group_meal_members (group_id, recipe_id) VALUES (?,?)", (gid, rid)
+        "INSERT INTO group_meal_members (group_id, meal_id, recipe_id) VALUES (?,?,?)", (gid, 0, rid)
     )
     db.commit()
     return jsonify({"ok": True, "slot_id": cur.lastrowid})
