@@ -4820,20 +4820,22 @@ async function showShopSettings() {
   await loadShopSettings();
   try {
     const rawIngs = await (await fetch("/shopping/ingredients")).json();
-    const keyMap = new Map(); // key → best display name (name only, no qty/unit)
+    const keyMap = new Map(); // key → { display (clean), editName (~ preserved) }
     rawIngs.forEach(raw => {
-      // Extract the name portion (strips leading qty+unit, keeps everything else incl. comma)
+      // Clean name for display and combining (shopIng strips ~ and parens)
       const name = parseIngForCombine(raw).name;
       const key = ingNameKey(name);
       if (key && name) {
-        // Prefer the longest (most descriptive) name for the display label
-        if (!keyMap.has(key) || name.length > keyMap.get(key).length) {
-          keyMap.set(key, name);
+        const existing = keyMap.get(key);
+        // Prefer the longest (most descriptive) clean name for the display label;
+        // also store the raw-name-with-tilde for the rename input field
+        if (!existing || name.length > existing.display.length) {
+          keyMap.set(key, { display: name, editName: _rawIngNamePart(raw) });
         }
       }
     });
     _shopSettingsIngredients = [...keyMap.entries()]
-      .map(([key, display]) => ({ key, display }))
+      .map(([key, { display, editName }]) => ({ key, display, editName }))
       .sort((a, b) => a.display.localeCompare(b.display));
   } catch {
     _shopSettingsIngredients = [];
@@ -4855,9 +4857,10 @@ function renderShopSettingsList() {
     });
   }
   // Precompute effective category once per ingredient (avoids calling _autoDetectCategory twice)
-  let items = _shopSettingsIngredients.map(({key, display}) => ({
+  let items = _shopSettingsIngredients.map(({key, display, editName}) => ({
     key,
     display,
+    editName: editName || display,
     cat: _shopSettings.ingredient_categories[key.toLowerCase()] || _shopSettings.ingredient_categories[key] || _autoDetectCategory(key)
   }));
   if (search) items = items.filter(({key, display}) => display.toLowerCase().includes(search) || key.includes(search));
@@ -4868,7 +4871,7 @@ function renderShopSettingsList() {
     el.innerHTML = `<div style="padding:1rem;text-align:center;color:var(--muted);font-size:0.85rem">${_shopSettingsIngredients.length ? "No matches." : "No ingredients found in your cookbook."}</div>`;
     return;
   }
-  el.innerHTML = items.map(({key, display, cat: current}) => {
+  el.innerHTML = items.map(({key, display, editName, cat: current}) => {
     const opts = SHOP_CATEGORY_NAMES.map(c => `<option value="${esc(c)}"${current===c?" selected":""}>${esc(c)}</option>`).join("");
     const safe = s => s.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'&quot;');
     const safeKey = safe(key);
@@ -4876,8 +4879,10 @@ function renderShopSettingsList() {
     // namePart = just the ingredient name without qty/unit (what the user edits when renaming)
     const namePart = parseIngForCombine(display).name || key;
     const safeNamePart = safe(namePart);
+    // editName = namePart with ~ preserved so user can see/remove tilde markers
+    const safeEditName = safe(editName || namePart);
     return `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.38rem 0.7rem;border-bottom:1px solid var(--border);gap:0.4rem">
-      <span style="font-size:0.85rem;flex:1;cursor:pointer;border-radius:4px;padding:0.1rem 0.25rem" title="Click to rename" onclick="renameShopIngredient('${safeKey}', this, '${safeDisplay}', '${safeNamePart}')">${esc(display)}</span>
+      <span style="font-size:0.85rem;flex:1;cursor:pointer;border-radius:4px;padding:0.1rem 0.25rem" title="Click to rename" onclick="renameShopIngredient('${safeKey}', this, '${safeDisplay}', '${safeNamePart}', '${safeEditName}')">${esc(display)}</span>
       <select onchange="setShopCategory('${safeKey}', this.value)"
         style="padding:0.2rem 0.3rem;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:0.78rem">
         ${opts}
@@ -4935,20 +4940,22 @@ function closeShopSettings(e) {
     document.getElementById("shop-settings-backdrop").hidden = true;
 }
 
-function renameShopIngredient(oldKey, spanEl, displayName, namePart) {
+function renameShopIngredient(oldKey, spanEl, displayName, namePart, editRaw) {
   const inp = document.createElement("input");
   inp.className = "inline-input";
-  // Show the name-only portion (no qty/unit) so edits replace just the name in all recipes
-  inp.value = namePart || displayName || oldKey;
+  // Show the raw name (with ~ markers visible) so the user can see and edit them;
+  // falls back to clean namePart if no raw version is available
+  inp.value = editRaw || namePart || displayName || oldKey;
   inp.style.flex = "1";
   inp.style.fontSize = "0.85rem";
   inp.style.minWidth = "0";
   spanEl.replaceWith(inp);
   inp.focus(); inp.select();
+  const originalVal = editRaw || namePart || displayName || oldKey;
   const finish = async () => {
     const newName = inp.value.trim();
     // Skip only if text is completely unchanged (allows capitalization changes)
-    if (!newName || newName === (namePart || displayName || oldKey)) {
+    if (!newName || newName === originalVal) {
       renderShopSettingsList(); return;
     }
     const res = await fetch("/shopping/rename-ingredient", {
@@ -5039,6 +5046,28 @@ function renderShoppingList() {
 }
 
 // ── Ingredient combining helpers ──────────────────────────────
+
+/** Extract the name portion of a raw ingredient string while keeping ~ markers intact.
+ *  Used for the rename-input in Shopping Categories so users can see/edit ~ markers. */
+function _rawIngNamePart(raw) {
+  let text = (raw || '').replace(/^[□▢◻◼☐☑☒✓✔\s]+/, '').trim();
+  text = text.replace(/^[-–]\s+/, '').trim();
+  // Strip parenthetical alternates (e.g. "(40 cups)") but leave ~ untouched
+  text = text.replace(/\s*\([^)]*\)/g, '').trim();
+  const NP = '(?:(?:\\d+\\s+)?\\d+\\/\\d+|\\d+(?:\\.\\d+)?)';
+  const UL = 'tsps?|teaspoons?|tbsps?|tbls?|tablespoons?|fl\\.?\\s*ozs?|cups?|pints?|pts?|quarts?|qts?|gallons?|gals?|ozs?|ounces?|lbs?|pounds?|kgs?|kilograms?|grams?|g(?=\\b)';
+  const QU_RE = new RegExp(`^(${NP})\\s*(${UL})?\\s*(.+)$`, 'i');
+  const m = text.match(QU_RE);
+  if (m && !isNaN(parseFraction(m[1].split(/[-–]/)[0].trim()))) {
+    let name = m[3].trim().replace(/^[,\s]+/, '');
+    let nm;
+    while ((nm = name.match(QU_RE)) && !isNaN(parseFraction(nm[1].split(/[-–]/)[0].trim()))) {
+      name = nm[3].trim().replace(/^[,\s]+/, '');
+    }
+    return name;
+  }
+  return text;
+}
 
 function parseIngForCombine(text) {
   // Normalise first: strip ~ markers and (...) alternate measurements so they
