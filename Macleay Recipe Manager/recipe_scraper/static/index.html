@@ -327,8 +327,11 @@
     /* Meals tab */
     #tab-meals, #tab-groupmeal { max-width:none; padding-left:1.5rem; padding-right:1.5rem; }
     #meals-detail-view { max-width:860px; margin:0 auto; }
-    .meal-recipe-row { display:flex; align-items:center; gap:0.8rem; padding:0.6rem 0; border-bottom:1px solid var(--border); }
+    .meal-recipe-row { display:flex; align-items:center; gap:0.8rem; padding:0.6rem 0; border-bottom:1px solid var(--border); cursor:grab; }
+    .meal-recipe-row:active { cursor:grabbing; }
     .meal-recipe-row:last-child { border-bottom:none; }
+    .meal-recipe-row.meal-dragging { opacity:0.45; }
+    .meal-recipe-row.meal-drag-over { border-color:var(--red) !important; box-shadow:0 0 0 2px rgba(180,60,60,0.18); }
     /* Group meal expandable recipe rows */
     .gm-meal-block { border:1px solid var(--border); border-radius:8px; margin-bottom:0.55rem; overflow:hidden; cursor:grab; }
     .gm-meal-block:last-child { margin-bottom:0; }
@@ -338,10 +341,7 @@
     .gm-meal-header { display:flex; align-items:center; gap:0.6rem; padding:0.55rem 0.8rem; background:var(--bg); cursor:grab; user-select:none; }
     .gm-meal-header:hover { background:var(--border); }
     .gm-drag-handle { color:var(--muted); font-size:0.85rem; flex-shrink:0; cursor:grab; letter-spacing:-1px; }
-    .gm-recipe-row { cursor:grab; }
-    .gm-recipe-row:active { cursor:grabbing; }
     .gm-recipe-row.gm-drag-over { background:rgba(180,60,60,0.1) !important; }
-    .gm-recipe-row.gm-dragging { opacity:0.45; }
     .gm-meal-chevron { font-size:0.72rem; color:var(--muted); transition:transform 0.18s; flex-shrink:0; }
     .gm-meal-header.open .gm-meal-chevron { transform:rotate(90deg); }
     .gm-meal-name { font-weight:700; font-size:0.92rem; flex:1; }
@@ -656,6 +656,7 @@
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
       <button class="btn btn-ghost" onclick="importCookbook()">📥 Import Cookbook</button>
       <button class="btn btn-ghost" onclick="linkExternalCookbook()" title="Open a .cookbook file from any folder (network drive, cloud storage, etc.)">🔗 Link from File…</button>
+      <button class="btn btn-ghost" onclick="openMergeCookbookModal()" title="Pull descriptions and new recipes from another cookbook into this one">🔀 Merge from Cookbook…</button>
       <button class="btn btn-primary" onclick="createCookbook()">+ New Cookbook</button>
     </div>
   </div>
@@ -691,6 +692,25 @@
     <div class="img-modal-btns" style="margin-top:1rem">
       <button class="btn btn-ghost" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" id="import-confirm-btn" hidden onclick="confirmImport()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Merge Cookbook Modal -->
+<div id="merge-cookbook-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeMergeCookbookModal(event)">
+  <div class="img-modal" style="width:min(480px,95vw)" onclick="event.stopPropagation()">
+    <h3>🔀 Merge from Cookbook</h3>
+    <p style="font-size:0.88rem;color:var(--muted);margin:0.6rem 0 1rem">
+      Recipes with <strong>matching names</strong> will have their <strong>instructions updated</strong> — ingredients are never changed.<br>
+      Recipes that only exist in the source will be <strong>added as new</strong>.
+    </p>
+    <label style="font-size:0.8rem;font-weight:700;color:var(--muted);display:block;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.5px">Source cookbook</label>
+    <select id="merge-source-select"
+      style="width:100%;padding:0.55rem 0.7rem;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--text);font-size:0.92rem;font-family:inherit;margin-bottom:1rem"></select>
+    <div id="merge-result" style="font-size:0.85rem;color:var(--muted);min-height:1.2rem"></div>
+    <div class="img-modal-btns" style="margin-top:1rem">
+      <button class="btn btn-ghost" onclick="closeMergeCookbookModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmMergeCookbook()">Merge</button>
     </div>
   </div>
 </div>
@@ -4265,7 +4285,14 @@ function renderMealDetail() {
         const defPlaceholder = m.default_servings != null ? `Default (${m.default_servings})` : "Servings…";
         const curSrv = r.recipe_servings != null ? r.recipe_servings : "";
         return `
-        <div class="meal-recipe-row gm-meal-block" style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid var(--border)">
+        <div class="meal-recipe-row gm-meal-block" draggable="true"
+          ondragstart="_mealRecipeDragStart(event,${r.id})"
+          ondragover="_mealRecipeDragOver(event,${r.id})"
+          ondragleave="_mealRecipeDragLeave(event)"
+          ondrop="_mealRecipeDrop(event,${r.id})"
+          ondragend="_mealRecipeDragEnd(event)"
+          style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid var(--border)">
+          <span class="gm-drag-handle" style="padding:0 0.15rem;flex-shrink:0" onclick="event.stopPropagation()">⠿</span>
           ${r.image
             ? `<img src="${esc(r.image)}" class="meal-recipe-thumb" style="flex-shrink:0"/>`
             : `<div class="meal-recipe-thumb meal-recipe-thumb-placeholder" style="flex-shrink:0">🍽️</div>`}
@@ -4275,10 +4302,10 @@ function renderMealDetail() {
           </div>
           <input type="number" min="0" step="0.5" value="${curSrv}" title="Set to 0 to skip from print/shopping"
             placeholder="${defPlaceholder}"
-            title="Override servings for this recipe"
             style="width:100px;padding:0.22rem 0.4rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:0.8rem;flex-shrink:0"
             onchange="setMealRecipeServings(${r.id},this.value)"
-            oninput="setMealRecipeServings(${r.id},this.value)"/>
+            oninput="setMealRecipeServings(${r.id},this.value)"
+            onclick="event.stopPropagation()"/>
           <button class="del-btn" style="font-size:1rem;padding:0 4px;flex-shrink:0" onclick="removeRecipeFromMeal(${r.id})">✕</button>
         </div>`;
       }).join("");
@@ -5447,46 +5474,45 @@ async function _gmSlotDrop(event, targetSlotId, slotType) {
   renderGroupMealDetail();
 }
 
-// ── Recipe drag-to-reorder within a meal ─────────────────────────────────────
-let _gmRecipeDragMealId = null, _gmRecipeDragRecipeId = null;
+// ── Recipe drag-to-reorder inside the meal editor ────────────────────────────
+let _mealRecipeDragId = null;
 
-function _gmRecipeDragStart(event, mealId, recipeId) {
-  _gmRecipeDragMealId   = mealId;
-  _gmRecipeDragRecipeId = recipeId;
-  event.currentTarget.classList.add("gm-dragging");
+function _mealRecipeDragStart(event, recipeId) {
+  _mealRecipeDragId = recipeId;
+  event.currentTarget.classList.add("meal-dragging");
   event.dataTransfer.effectAllowed = "move";
 }
-function _gmRecipeDragOver(event, mealId, recipeId) {
-  if (_gmRecipeDragMealId == null || _gmRecipeDragRecipeId === recipeId || _gmRecipeDragMealId !== mealId) return;
+function _mealRecipeDragOver(event, recipeId) {
+  if (_mealRecipeDragId == null || _mealRecipeDragId === recipeId) return;
   event.preventDefault();
-  event.currentTarget.classList.add("gm-drag-over");
+  event.currentTarget.classList.add("meal-drag-over");
 }
-function _gmRecipeDragLeave(event) {
-  event.currentTarget.classList.remove("gm-drag-over");
+function _mealRecipeDragLeave(event) {
+  event.currentTarget.classList.remove("meal-drag-over");
 }
-function _gmRecipeDragEnd(event) {
-  _gmRecipeDragMealId = null; _gmRecipeDragRecipeId = null;
-  document.querySelectorAll(".gm-recipe-row.gm-dragging,.gm-recipe-row.gm-drag-over")
-    .forEach(el => el.classList.remove("gm-dragging","gm-drag-over"));
+function _mealRecipeDragEnd(event) {
+  _mealRecipeDragId = null;
+  document.querySelectorAll(".meal-recipe-row.meal-dragging,.meal-recipe-row.meal-drag-over")
+    .forEach(el => el.classList.remove("meal-dragging","meal-drag-over"));
 }
-async function _gmRecipeDrop(event, mealId, recipeId) {
+async function _mealRecipeDrop(event, recipeId) {
   event.preventDefault();
-  event.currentTarget.classList.remove("gm-drag-over");
-  if (_gmRecipeDragMealId == null || _gmRecipeDragRecipeId === recipeId || _gmRecipeDragMealId !== mealId) return;
-  const full = savedMeals.find(m => m.id === mealId);
-  if (!full) return;
-  const recipes = full.recipes;
-  const fromIdx = recipes.findIndex(r => r.id === _gmRecipeDragRecipeId);
-  const toIdx   = recipes.findIndex(r => r.id === recipeId);
+  event.currentTarget.classList.remove("meal-drag-over");
+  if (_mealRecipeDragId == null || _mealRecipeDragId === recipeId) return;
+  const m = selectedMeal;
+  if (!m) return;
+  const fromIdx = m.recipes.findIndex(r => r.id === _mealRecipeDragId);
+  const toIdx   = m.recipes.findIndex(r => r.id === recipeId);
   if (fromIdx < 0 || toIdx < 0) return;
-  const [item] = recipes.splice(fromIdx, 1);
-  recipes.splice(toIdx, 0, item);
-  full.recipes = recipes;
-  await fetch(`/meals/${mealId}/recipes/reorder`, {
+  const [item] = m.recipes.splice(fromIdx, 1);
+  m.recipes.splice(toIdx, 0, item);
+  const idx = savedMeals.findIndex(sm => sm.id === m.id);
+  if (idx !== -1) savedMeals[idx].recipes = [...m.recipes];
+  await fetch(`/meals/${m.id}/recipes/reorder`, {
     method:"PATCH", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({order: recipes.map(r => r.id)})
+    body: JSON.stringify({order: m.recipes.map(r => r.id)})
   });
-  renderGroupMealDetail();
+  renderMealDetail();
 }
 
 function renderGroupMealDetail() {
@@ -5546,13 +5572,7 @@ function renderGroupMealDetail() {
           const rph  = rs[r.id] != null ? String(rs[r.id])
                      : (effBase != null ? `Meal default (${effBase})` : "Servings…");
           const rval = rs[r.id] != null ? rs[r.id] : "";
-          return `<div class="gm-recipe-row" draggable="true"
-            ondragstart="event.stopPropagation();_gmRecipeDragStart(event,${m.id},${r.id})"
-            ondragover="event.stopPropagation();_gmRecipeDragOver(event,${m.id},${r.id})"
-            ondragleave="event.stopPropagation();_gmRecipeDragLeave(event)"
-            ondrop="event.stopPropagation();_gmRecipeDrop(event,${m.id},${r.id})"
-            ondragend="event.stopPropagation();_gmRecipeDragEnd(event)">
-            <span class="gm-drag-handle" style="padding:0 0.2rem">⠿</span>
+          return `<div class="gm-recipe-row">
             <span class="gm-recipe-name">${esc(r.title)}</span>
             <span class="gm-srv-label">Servings:</span>
             <input type="number" class="gm-srv-input" min="0" step="0.5"
@@ -5853,6 +5873,70 @@ async function deleteGroupMealById(gid) {
   await fetch(`/group-meals/${gid}`, {method:"DELETE"});
   savedGroupMeals = savedGroupMeals.filter(g => g.id !== gid);
   renderGroupMealList();
+}
+
+// ── Cookbook merge ────────────────────────────────────────────────────────────
+function openMergeCookbookModal() {
+  const others = savedCookbooks.filter(c => !c.isActive);
+  if (!others.length) {
+    showAlert("No other cookbooks available. Add or link another cookbook first.");
+    return;
+  }
+  const sel = document.getElementById("merge-source-select");
+  sel.innerHTML = others.map(c =>
+    `<option value="${c.path.replace(/"/g,'&quot;')}">${esc(c.name)} (${c.recipeCount} recipe${c.recipeCount!==1?"s":""})</option>`
+  ).join("");
+  document.getElementById("merge-result").textContent = "";
+  document.getElementById("merge-cookbook-modal-backdrop").hidden = false;
+}
+
+function closeMergeCookbookModal(e) {
+  if (e && e.target !== document.getElementById("merge-cookbook-modal-backdrop")) return;
+  document.getElementById("merge-cookbook-modal-backdrop").hidden = true;
+}
+
+async function confirmMergeCookbook() {
+  const sel     = document.getElementById("merge-source-select");
+  const srcPath = sel?.value;
+  if (!srcPath) return;
+  const srcName = sel.options[sel.selectedIndex]?.text || "the selected cookbook";
+  const active  = savedCookbooks.find(c => c.isActive);
+  const ok = await showConfirm(
+    `Merge "${srcName}" into "${active?.name || "active cookbook"}"?\n\n` +
+    `• Recipes with matching names → instructions updated (ingredients unchanged)\n` +
+    `• Recipes only in source → added as new`,
+    "Merge", "btn-primary"
+  );
+  if (!ok) return;
+  const resultEl = document.getElementById("merge-result");
+  resultEl.style.color = "var(--muted)";
+  resultEl.textContent = "Merging…";
+  try {
+    const res  = await fetch("/cookbooks/merge", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({source_path: srcPath})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      resultEl.style.color = "var(--red)";
+      resultEl.textContent = "Error: " + (data.error || "Unknown error");
+      return;
+    }
+    resultEl.style.color = "var(--text)";
+    resultEl.innerHTML =
+      `✅ Done! Updated instructions for <strong>${data.updated}</strong> ` +
+      `recipe${data.updated!==1?"s":""}, added <strong>${data.added}</strong> new ` +
+      `recipe${data.added!==1?"s":""}.` +
+      (data.added_titles?.length
+        ? `<div style="margin-top:0.4rem;font-size:0.8rem;color:var(--muted)">` +
+          `Added: ${data.added_titles.map(t => esc(t)).join(", ")}</div>`
+        : "");
+    await loadSavedRecipes();
+    await initCookbooksTab();
+  } catch(err) {
+    resultEl.style.color = "var(--red)";
+    resultEl.textContent = "Error: " + err.message;
+  }
 }
 
 // ── Helpers for group meal print/PDF ──────────────────────────
