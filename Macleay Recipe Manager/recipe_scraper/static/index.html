@@ -5403,8 +5403,33 @@ function renderGroupMealDetail() {
   const available = savedMeals;
 
   const mealRows = (!g.meals || !g.meals.length)
-    ? `<p style="color:var(--muted);font-size:0.9rem;padding:0.5rem 0">No meals yet. Add some below.</p>`
+    ? `<p style="color:var(--muted);font-size:0.9rem;padding:0.5rem 0">No meals or recipes yet. Add some below.</p>`
     : (g.meals||[]).map(m => {
+
+        // ── Direct recipe slot ──────────────────────────────────────────────
+        if (m.type === "recipe") {
+          const srv   = m.servings != null ? m.servings : "";
+          const srvPh = m.servings != null ? String(m.servings)
+                      : (g.default_servings != null ? `Group default (${g.default_servings})` : "Servings…");
+          return `<div class="gm-meal-block">
+            <div class="gm-meal-header" style="cursor:default">
+              <span style="font-size:0.68rem;font-weight:700;background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px;flex-shrink:0">Recipe</span>
+              <span class="gm-meal-name">${esc(m.name)}</span>
+              <input type="number" class="gm-srv-input" min="0" step="0.5"
+                style="margin-left:auto"
+                placeholder="${srvPh}" value="${srv}"
+                title="Servings for this recipe."
+                onchange="updateGroupMealServings(${m.slot_id}, this.value, true)"
+                onclick="event.stopPropagation()"/>
+              <button class="btn-icon" onclick="event.stopPropagation();moveGroupMealSlot(${m.slot_id}, -1)" title="Move up" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1rem;padding:0 2px">↑</button>
+              <button class="btn-icon" onclick="event.stopPropagation();moveGroupMealSlot(${m.slot_id}, 1)" title="Move down" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1rem;padding:0 2px">↓</button>
+              <button class="del-btn" style="font-size:0.9rem;padding:0 4px;flex-shrink:0"
+                onclick="event.stopPropagation();removeMealFromGroupMeal(${m.slot_id}, true)">✕</button>
+            </div>
+          </div>`;
+        }
+
+        // ── Meal slot (existing) ────────────────────────────────────────────
         const full = savedMeals.find(sm => sm.id === m.id);
         const recipes = full ? (full.recipes || []) : [];
         const rc = recipes.length;
@@ -5458,16 +5483,25 @@ function renderGroupMealDetail() {
         </div>`;
       }).join("");
 
-  const addRow = available.length ? `
-    <div style="margin-top:0.9rem">
-      <div class="section-title" style="margin-bottom:0.5rem">Add Meal</div>
-      <input type="text" id="gm-cat-filter" placeholder="Filter by category…" oninput="renderGroupMealBrowser()"
-        style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem;width:140px;margin-bottom:0.4rem"/>
-      <div class="shop-search-bar" style="margin-bottom:0.5rem">
-        <input type="text" id="gm-meal-search" placeholder="Search meals…" oninput="renderGroupMealBrowser()"/>
-      </div>
-      <div id="gm-meal-browser" class="shop-browser" style="max-height:240px"></div>
-    </div>` : `<p style="font-size:0.82rem;color:var(--muted);margin-top:0.6rem">All saved meals are already in this group.</p>`;
+  const addRow = `
+    <div style="margin-top:0.9rem;display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start">
+      ${available.length ? `<div style="flex:1;min-width:220px">
+        <div class="section-title" style="margin-bottom:0.5rem">Add Meal</div>
+        <input type="text" id="gm-cat-filter" placeholder="Filter by category…" oninput="renderGroupMealBrowser()"
+          style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem;width:140px;margin-bottom:0.4rem"/>
+        <div class="shop-search-bar" style="margin-bottom:0.5rem">
+          <input type="text" id="gm-meal-search" placeholder="Search meals…" oninput="renderGroupMealBrowser()"/>
+        </div>
+        <div id="gm-meal-browser" class="shop-browser" style="max-height:240px"></div>
+      </div>` : ""}
+      ${savedRecipes.length ? `<div style="flex:1;min-width:220px">
+        <div class="section-title" style="margin-bottom:0.5rem">Add Recipe</div>
+        <div class="shop-search-bar" style="margin-bottom:0.5rem">
+          <input type="text" id="gm-recipe-search" placeholder="Search recipes…" oninput="renderGroupMealRecipeBrowser()"/>
+        </div>
+        <div id="gm-recipe-browser" class="shop-browser" style="max-height:240px"></div>
+      </div>` : ""}
+    </div>`;
 
   const dsVal = g.default_servings != null ? g.default_servings : "";
   content.innerHTML = `
@@ -5500,6 +5534,7 @@ function renderGroupMealDetail() {
     </div></div>`;
   // expand/collapse is now wired via inline onclick on .gm-meal-header
   if (available.length) renderGroupMealBrowser();
+  if (savedRecipes.length) renderGroupMealRecipeBrowser();
 }
 
 function renderGroupMealBrowser() {
@@ -5612,11 +5647,47 @@ async function addMealToGroupMeal(mealId) {
   const m = savedMeals.find(m => m.id === mealId);
   if (m) {
     g.meals = g.meals || [];
-    g.meals.push({slot_id: data.slot_id, id: m.id, name: m.name, servings: null, recipe_servings: {}});
+    g.meals.push({slot_id: data.slot_id, type: "meal", id: m.id, name: m.name, servings: null, recipe_servings: {}});
   }
   renderGroupMealDetail();
   const inp = document.getElementById("gm-meal-search");
   if (inp && searchVal) { inp.value = searchVal; renderGroupMealBrowser(); }
+  showToast();
+}
+
+function renderGroupMealRecipeBrowser() {
+  const browser = document.getElementById("gm-recipe-browser");
+  if (!browser || !selectedGroupMeal) return;
+  const q = (document.getElementById("gm-recipe-search")?.value || "").toLowerCase();
+  const matches = savedRecipes.filter(r => !q || (r.title||"").toLowerCase().includes(q));
+  browser.innerHTML = matches.length
+    ? matches.slice(0, 60).map(r => `
+        <div class="shop-recipe-row" onclick="addRecipeToGroupMeal(${r.id})">
+          ${r.image ? `<img class="shop-recipe-thumb" src="${esc(r.image)}" loading="lazy"/>` : `<div class="shop-recipe-thumb-placeholder">🍽️</div>`}
+          <div class="shop-recipe-info">
+            <div class="shop-recipe-title">${esc(r.title)}</div>
+            <div class="shop-recipe-meta">${esc(r.servings||"")}</div>
+          </div>
+        </div>`).join("")
+    : `<div style="padding:0.6rem;color:var(--muted);font-size:0.85rem">No matching recipes.</div>`;
+}
+
+async function addRecipeToGroupMeal(recipeId) {
+  const g = selectedGroupMeal;
+  if (!g) return;
+  const r = savedRecipes.find(r => r.id === recipeId);
+  if (!r) return;
+  const searchVal = document.getElementById("gm-recipe-search")?.value || "";
+  const res = await fetch(`/group-meals/${g.id}/recipes`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({recipe_id: recipeId})
+  });
+  const data = await res.json();
+  g.meals = g.meals || [];
+  g.meals.push({slot_id: data.slot_id, type: "recipe", id: r.id, name: r.title, servings: null, recipe_servings: {}});
+  renderGroupMealDetail();
+  const inp = document.getElementById("gm-recipe-search");
+  if (inp && searchVal) { inp.value = searchVal; renderGroupMealRecipeBrowser(); }
   showToast();
 }
 
@@ -5684,19 +5755,35 @@ function _groupAllRecipes() {
   if (!g) return [];
   const results = [];
   (g.meals||[]).forEach(gm => {
+    // ── Direct recipe slot ────────────────────────────────────────────────────
+    if (gm.type === "recipe") {
+      const r = savedRecipes.find(r => r.id === gm.id);
+      if (!r) return;
+      const effectiveServings = gm.servings != null ? gm.servings
+                              : (g.default_servings != null ? g.default_servings : null);
+      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
+      const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
+      let factor = 1;
+      if (effectiveServings && origNum && origNum > 0) {
+        const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
+        factor = target / origNum;
+      }
+      results.push({recipe: r, factor});
+      return;
+    }
+
+    // ── Meal slot ─────────────────────────────────────────────────────────────
     const full = savedMeals.find(m => m.id === gm.id);
     if (!full) return;
     const rs = gm.recipe_servings || {};
-    // Meal-level effective servings (fallback chain below recipe level)
     const mealServings = gm.servings != null ? gm.servings
                        : (g.default_servings != null ? g.default_servings : null);
     if (mealServings !== null && parseFloat(mealServings) === 0) return; // skip entire meal
     (full.recipes||[]).forEach(mr => {
       const r = savedRecipes.find(r => r.id === mr.id);
       if (r) {
-        // Per-recipe override takes highest priority
         const effectiveServings = rs[mr.id] != null ? rs[mr.id] : mealServings;
-        if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return; // skip 0-serving recipes
+        if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
         const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
         let factor = 1;
         if (effectiveServings && origNum && origNum > 0) {
@@ -5756,11 +5843,27 @@ function buildShoppingHtmlByMeal(g) {
   const escP = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const sections = [];
   (g.meals||[]).forEach(gm => {
+    // ── Direct recipe slot ────────────────────────────────────────────────────
+    if (gm.type === "recipe") {
+      const r = savedRecipes.find(r => r.id === gm.id);
+      if (!r) return;
+      const effectiveServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
+      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
+      const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
+      let factor = 1;
+      if (effectiveServings && origNum && origNum > 0) factor = parseFloat(effectiveServings) / origNum;
+      const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
+      const ings = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i);
+      if (ings.length) sections.push({mealName: r.title, ingredients: ings});
+      return;
+    }
+
+    // ── Meal slot ─────────────────────────────────────────────────────────────
     const full = savedMeals.find(m => m.id === gm.id);
     if (!full || !full.recipes || !full.recipes.length) return;
     const rs = gm.recipe_servings || {};
     const mealServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
-    if (mealServings !== null && parseFloat(mealServings) === 0) return; // skip entire meal
+    if (mealServings !== null && parseFloat(mealServings) === 0) return;
     const ings = [];
     full.recipes.forEach(mr => {
       const effectiveServings = rs[mr.id] != null ? rs[mr.id] : mealServings;
@@ -5844,19 +5947,31 @@ async function exportGroupFolderPdf() {
   const shopCatHtml = buildShoppingHtml(shopCatEntries, g.name + " — Shopping List");
   if (shopCatHtml) pdfs.push({ filename: "Shopping List by Category", html: shopCatHtml });
 
-  // One PDF per meal
+  // One PDF per meal / direct recipe
   (g.meals || []).forEach(gm => {
+    // ── Direct recipe slot ──────────────────────────────────────────────────
+    if (gm.type === "recipe") {
+      const r = savedRecipes.find(r => r.id === gm.id);
+      if (!r) return;
+      const effectiveServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
+      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
+      const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
+      const factor = (effectiveServings && origNum && origNum > 0) ? parseFloat(effectiveServings) / origNum : 1;
+      pdfs.push({ filename: r.title, html: buildMealRecipesHtml([r], [factor]) });
+      return;
+    }
+
+    // ── Meal slot ───────────────────────────────────────────────────────────
     const full = savedMeals.find(m => m.id === gm.id);
     if (!full || !full.recipes || !full.recipes.length) return;
     const rs = gm.recipe_servings || {};
     const mealServings = gm.servings != null ? gm.servings
                        : (g.default_servings != null ? g.default_servings : null);
-    if (mealServings !== null && parseFloat(mealServings) === 0) return; // skip entire meal
+    if (mealServings !== null && parseFloat(mealServings) === 0) return;
     const pairs = full.recipes.map(mr => {
       const r = savedRecipes.find(r => r.id === mr.id);
       if (!r) return null;
       const effectiveServings = rs[mr.id] != null ? rs[mr.id] : mealServings;
-      // Skip 0-serving recipes from print too
       if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return null;
       const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
       const factor = (effectiveServings && origNum && origNum > 0) ? effectiveServings / origNum : 1;
