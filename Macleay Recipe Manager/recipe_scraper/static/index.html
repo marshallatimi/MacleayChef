@@ -1997,6 +1997,16 @@ function scaleIngredient(text, factor) {
   // ~ at start = whole ingredient is a fixed descriptor; strip ~ and return unscaled
   if ((text || '').startsWith('~')) return text.slice(1);
 
+  // ~ anywhere mid-string = everything from ~ onward is a fixed label (size descriptor etc.)
+  // Scale only the portion before the ~; strip the ~ and keep the rest verbatim.
+  // e.g. "1 Box Churros ~10\"" → scale "1 Box Churros ", keep "10\"" fixed.
+  const tildeIdx = (text || '').indexOf('~');
+  let suffix = '';
+  if (tildeIdx > 0) {
+    suffix = text.slice(tildeIdx + 1); // everything after ~ (~ itself stripped)
+    text   = text.slice(0, tildeIdx);  // only scale this portion
+  }
+
   const MARK = "\x01";
   const NP = '(?:(?:\\d+\\s+)?\\d+\\/\\d+|\\d+(?:\\.\\d+)?)';
   const UL = 'tsps?|teaspoons?|tbsps?|tbls?|tablespoons?|fl\\.?\\s*ozs?|cups?|pints?|pts?|quarts?|qts?|gallons?|gals?|ozs?|ounces?|lbs?|pounds?|kgs?|kilograms?|grams?|g(?=\\b)';
@@ -2031,19 +2041,16 @@ function scaleIngredient(text, factor) {
     }
   });
 
-  // Between pass 1 and pass 2: protect any inline ~NUMBER patterns from being scaled.
-  // e.g. "1 Box Churros ~10"" → the 10 is a fixed size descriptor, not a quantity.
-  // The ~ is stripped from display; the number is shielded from pass 2 by MARK wrapping.
-  result = result.replace(/~(\d+(?:[.\/ ]\d+)*)/g, (_, num) => MARK + num.trim() + MARK);
-
   // Pass 2: scale remaining plain numbers (outside MARK-protected regions)
   const parts = result.split(MARK);
-  return parts.map((part, i) => i % 2 === 0
+  const scaled = parts.map((part, i) => i % 2 === 0
     ? part.replace(/\b(\d+\s+\d+\/\d+|\d+\/\d+|\d*\.?\d+)\b(?!\s*°)/g, m => {
         const v = parseFraction(m); return (isNaN(v) || v === 0) ? m : formatNum(v * factor);
       })
     : part
   ).join('');
+
+  return scaled + suffix;
 }
 
 // Standard cup fractions used in recipes
