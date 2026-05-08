@@ -2110,6 +2110,106 @@ def unlink_cookbook():
     return jsonify({"ok": True})
 
 
+@app.route("/cookbooks/merge", methods=["POST"])
+def merge_cookbook():
+    """Merge a source cookbook into the active one.
+
+    Body: {"source_path": "/path/to/other.cookbook"}
+
+    For recipes whose titles match (case-insensitive) in the active cookbook:
+        - Updates instruction_groups, instructions, directions_text
+          (i.e. the recipe 'description'/how-to) without touching ingredients.
+    For recipes in the source that do not exist in the active cookbook:
+        - Inserts the full recipe.
+
+    Returns: {"updated": N, "added": M, "added_titles": [...]}
+    """
+    data     = request.get_json() or {}
+    src_path = (data.get("source_path") or "").strip()
+    if not src_path or not os.path.exists(src_path):
+        return jsonify({"error": "Source cookbook not found"}), 400
+    if os.path.normpath(src_path) == os.path.normpath(active_db_path()):
+        return jsonify({"error": "Source and target are the same cookbook"}), 400
+
+    # ── Read source recipes ──────────────────────────────────────────────────
+    try:
+        src_conn             = sqlite3.connect(src_path)
+        src_conn.row_factory = sqlite3.Row
+        src_rows             = src_conn.execute("SELECT * FROM recipes").fetchall()
+        src_recipes          = [dict(r) for r in src_rows]
+    except Exception as e:
+        return jsonify({"error": f"Could not read source cookbook: {e}"}), 400
+    finally:
+        try:
+            src_conn.close()
+        except Exception:
+            pass
+
+    db = get_db()
+
+    # Build lookup: normalised title → id in active cookbook
+    existing_rows = db.execute("SELECT id, title FROM recipes").fetchall()
+    existing_map  = {(r["title"] or "").strip().lower(): r["id"] for r in existing_rows}
+
+    updated      = 0
+    added        = 0
+    added_titles = []
+
+    for sr in src_recipes:
+        title = (sr.get("title") or "").strip()
+        key   = title.lower()
+
+        if key in existing_map:
+            # Update instructions / directions only — leave ingredients untouched
+            db.execute(
+                """UPDATE recipes
+                      SET instruction_groups = ?,
+                          instructions       = ?,
+                          directions_text    = ?
+                    WHERE id = ?""",
+                (
+                    sr.get("instruction_groups"),
+                    sr.get("instructions"),
+                    sr.get("directions_text"),
+                    existing_map[key],
+                ),
+            )
+            updated += 1
+        else:
+            # Insert entire recipe
+            db.execute(
+                """INSERT INTO recipes
+                       (title, servings, servings_num, ingredients, instructions,
+                        ingredient_groups, instruction_groups, image, total_time,
+                        site_name, source_url, category, categories, notes,
+                        scale_by_batch, directions_text)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    title,
+                    sr.get("servings"),
+                    sr.get("servings_num"),
+                    sr.get("ingredients"),
+                    sr.get("instructions"),
+                    sr.get("ingredient_groups"),
+                    sr.get("instruction_groups"),
+                    sr.get("image"),
+                    sr.get("total_time"),
+                    sr.get("site_name"),
+                    sr.get("source_url"),
+                    sr.get("category"),
+                    sr.get("categories"),
+                    sr.get("notes"),
+                    sr.get("scale_by_batch", 0),
+                    sr.get("directions_text"),
+                ),
+            )
+            added += 1
+            added_titles.append(title)
+
+    db.commit()
+    return jsonify({"updated": updated, "added": added, "added_titles": added_titles})
+
+
 # ── Shopping settings ─────────────────────────────────────────────────────────
 
 @app.route("/shopping/settings", methods=["GET"])
