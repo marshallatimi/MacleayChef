@@ -698,15 +698,27 @@
 
 <!-- Merge Cookbook Modal -->
 <div id="merge-cookbook-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeMergeCookbookModal(event)">
-  <div class="img-modal" style="width:min(480px,95vw)" onclick="event.stopPropagation()">
+  <div class="img-modal" style="width:min(500px,95vw)" onclick="event.stopPropagation()">
     <h3>🔀 Merge from Cookbook</h3>
-    <p style="font-size:0.88rem;color:var(--muted);margin:0.6rem 0 1rem">
-      Recipes with <strong>matching names</strong> will have their <strong>instructions updated</strong> — ingredients are never changed.<br>
-      Recipes that only exist in the source will be <strong>added as new</strong>.
-    </p>
     <label style="font-size:0.8rem;font-weight:700;color:var(--muted);display:block;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.5px">Source cookbook</label>
     <select id="merge-source-select"
       style="width:100%;padding:0.55rem 0.7rem;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--text);font-size:0.92rem;font-family:inherit;margin-bottom:1rem"></select>
+
+    <div style="font-size:0.8rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.45rem">For recipes with matching names, update:</div>
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;font-size:0.88rem;cursor:pointer">
+      <input type="checkbox" id="merge-opt-instructions" checked> Instructions &amp; directions
+    </label>
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;font-size:0.88rem;cursor:pointer">
+      <input type="checkbox" id="merge-opt-ingredients"> Ingredients
+    </label>
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;font-size:0.88rem;cursor:pointer">
+      <input type="checkbox" id="merge-opt-meta"> Servings, categories &amp; notes
+    </label>
+
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;font-size:0.88rem;cursor:pointer;padding-top:0.6rem;border-top:1px solid var(--border)">
+      <input type="checkbox" id="merge-opt-add-new" checked> Add recipes from source that don't exist here
+    </label>
+
     <div id="merge-result" style="font-size:0.85rem;color:var(--muted);min-height:1.2rem"></div>
     <div class="img-modal-btns" style="margin-top:1rem">
       <button class="btn btn-ghost" onclick="closeMergeCookbookModal()">Cancel</button>
@@ -2572,7 +2584,7 @@ const PRINT_CSS = `
   .source { text-align:center; font-size:10pt; margin-bottom:1pt; }
   .yield  { text-align:center; font-size:11pt; margin-bottom:8pt; }
   .note   { font-style:italic; margin-bottom:8pt; font-size:10.5pt; line-height:1.4; }
-  .ings { column-count:2; column-gap:1.6em; margin-bottom:14pt; }
+  .ings { column-count:2; column-gap:1.6em; margin-bottom:26pt; }
   .ing  { font-size:11pt; line-height:1.35; margin:0 0 1.5pt; break-inside:avoid; }
   .ing-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:0 0 1pt; break-inside:avoid; break-after:avoid; }
   .directions { font-size:11pt; line-height:1.45; text-align:justify; margin:0 0 3pt 0; }
@@ -5901,20 +5913,42 @@ async function confirmMergeCookbook() {
   if (!srcPath) return;
   const srcName = sel.options[sel.selectedIndex]?.text || "the selected cookbook";
   const active  = savedCookbooks.find(c => c.isActive);
+
+  const updInstr  = document.getElementById("merge-opt-instructions")?.checked ?? true;
+  const updIng    = document.getElementById("merge-opt-ingredients")?.checked ?? false;
+  const updMeta   = document.getElementById("merge-opt-meta")?.checked ?? false;
+  const addNew    = document.getElementById("merge-opt-add-new")?.checked ?? true;
+
+  if (!updInstr && !updIng && !updMeta && !addNew) {
+    showAlert("Please select at least one merge option.");
+    return;
+  }
+
+  const lines = [];
+  if (updInstr)  lines.push("• Matching recipes: update instructions");
+  if (updIng)    lines.push("• Matching recipes: update ingredients");
+  if (updMeta)   lines.push("• Matching recipes: update servings, categories & notes");
+  if (addNew)    lines.push("• Add recipes from source that don't exist here");
+
   const ok = await showConfirm(
-    `Merge "${srcName}" into "${active?.name || "active cookbook"}"?\n\n` +
-    `• Recipes with matching names → instructions updated (ingredients unchanged)\n` +
-    `• Recipes only in source → added as new`,
+    `Merge "${srcName}" into "${active?.name || "active cookbook"}"?\n\n${lines.join("\n")}`,
     "Merge", "btn-primary"
   );
   if (!ok) return;
+
   const resultEl = document.getElementById("merge-result");
   resultEl.style.color = "var(--muted)";
   resultEl.textContent = "Merging…";
   try {
     const res  = await fetch("/cookbooks/merge", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({source_path: srcPath})
+      body: JSON.stringify({
+        source_path:          srcPath,
+        update_instructions:  updInstr,
+        update_ingredients:   updIng,
+        update_meta:          updMeta,
+        add_new:              addNew,
+      })
     });
     const data = await res.json();
     if (!res.ok) {
@@ -5923,13 +5957,13 @@ async function confirmMergeCookbook() {
       return;
     }
     resultEl.style.color = "var(--text)";
-    resultEl.innerHTML =
-      `✅ Done! Updated instructions for <strong>${data.updated}</strong> ` +
-      `recipe${data.updated!==1?"s":""}, added <strong>${data.added}</strong> new ` +
-      `recipe${data.added!==1?"s":""}.` +
+    const updParts = [];
+    if (data.updated > 0)  updParts.push(`updated <strong>${data.updated}</strong> matching recipe${data.updated!==1?"s":""}`);
+    if (data.added  > 0)   updParts.push(`added <strong>${data.added}</strong> new recipe${data.added!==1?"s":""}`);
+    resultEl.innerHTML = `✅ Done! ${updParts.length ? updParts.join(", ") + "." : "Nothing changed."}` +
       (data.added_titles?.length
         ? `<div style="margin-top:0.4rem;font-size:0.8rem;color:var(--muted)">` +
-          `Added: ${data.added_titles.map(t => esc(t)).join(", ")}</div>`
+          `New recipes: ${data.added_titles.map(t => esc(t)).join(", ")}</div>`
         : "");
     await loadSavedRecipes();
     await initCookbooksTab();

@@ -2114,13 +2114,14 @@ def unlink_cookbook():
 def merge_cookbook():
     """Merge a source cookbook into the active one.
 
-    Body: {"source_path": "/path/to/other.cookbook"}
-
-    For recipes whose titles match (case-insensitive) in the active cookbook:
-        - Updates instruction_groups, instructions, directions_text
-          (i.e. the recipe 'description'/how-to) without touching ingredients.
-    For recipes in the source that do not exist in the active cookbook:
-        - Inserts the full recipe.
+    Body:
+      {
+        "source_path":         "/path/to/other.cookbook",
+        "update_instructions": true,   // update directions_text / instruction_groups
+        "update_ingredients":  false,  // update ingredient_groups / ingredients
+        "update_meta":         false,  // update servings, categories, notes
+        "add_new":             true    // insert recipes that don't exist in active cookbook
+      }
 
     Returns: {"updated": N, "added": M, "added_titles": [...]}
     """
@@ -2130,6 +2131,11 @@ def merge_cookbook():
         return jsonify({"error": "Source cookbook not found"}), 400
     if os.path.normpath(src_path) == os.path.normpath(active_db_path()):
         return jsonify({"error": "Source and target are the same cookbook"}), 400
+
+    upd_instructions = bool(data.get("update_instructions", True))
+    upd_ingredients  = bool(data.get("update_ingredients",  False))
+    upd_meta         = bool(data.get("update_meta",         False))
+    add_new          = bool(data.get("add_new",             True))
 
     # ── Read source recipes ──────────────────────────────────────────────────
     try:
@@ -2160,23 +2166,35 @@ def merge_cookbook():
         key   = title.lower()
 
         if key in existing_map:
-            # Update instructions / directions only — leave ingredients untouched
-            db.execute(
-                """UPDATE recipes
-                      SET instruction_groups = ?,
-                          instructions       = ?,
-                          directions_text    = ?
-                    WHERE id = ?""",
-                (
-                    sr.get("instruction_groups"),
-                    sr.get("instructions"),
-                    sr.get("directions_text"),
-                    existing_map[key],
-                ),
-            )
-            updated += 1
-        else:
-            # Insert entire recipe
+            # Build UPDATE from whichever fields were selected
+            set_clauses = []
+            values      = []
+
+            if upd_instructions:
+                set_clauses += ["instruction_groups=?", "instructions=?", "directions_text=?"]
+                values      += [sr.get("instruction_groups"), sr.get("instructions"),
+                                sr.get("directions_text")]
+
+            if upd_ingredients:
+                set_clauses += ["ingredient_groups=?", "ingredients=?"]
+                values      += [sr.get("ingredient_groups"), sr.get("ingredients")]
+
+            if upd_meta:
+                set_clauses += ["servings=?", "servings_num=?", "category=?",
+                                "categories=?", "notes=?"]
+                values      += [sr.get("servings"), sr.get("servings_num"),
+                                sr.get("category"), sr.get("categories"), sr.get("notes")]
+
+            if set_clauses:
+                values.append(existing_map[key])
+                db.execute(
+                    f"UPDATE recipes SET {', '.join(set_clauses)} WHERE id=?",
+                    values,
+                )
+                updated += 1
+
+        elif add_new:
+            # Insert entire recipe from source
             db.execute(
                 """INSERT INTO recipes
                        (title, servings, servings_num, ingredients, instructions,
@@ -2837,9 +2855,10 @@ def _strip_rtf(rtf_text):
             i += 1
 
     text = ''.join(result)
-    # Normalise each line, drop lines that are pure RTF table artifacts (e.g. "Lucida Casual;")
+    # Normalise each line; filter pure-artifact lines (stray semicolons from font table)
+    # but PRESERVE blank lines — they represent intentional paragraph breaks from \par\par.
     lines = [' '.join(l.split()) for l in text.splitlines()]
-    lines = [l for l in lines if l and not re.match(r'^[;\s]+$', l)]
+    lines = [l for l in lines if l == '' or not re.match(r'^[;\s]+$', l)]
     text  = re.sub(r'\n{3,}', '\n\n', '\n'.join(lines)).strip()
     return text
 
@@ -3016,9 +3035,10 @@ def _parse_mm_block(block):
         notes_raw = note_match.group(1).strip()
         rest_text = rest_text[:note_match.start()] + rest_text[note_match.end():]
 
-    # Strip RTF markup if present
+    # Strip RTF markup if present; track so we don't re-join-wrap RTF output
     rest_text = rest_text.strip()
-    if rest_text.startswith('{\\rtf'):
+    was_rtf   = rest_text.startswith('{\\rtf')
+    if was_rtf:
         rest_text = _strip_rtf(rest_text)
 
     # Strip trailing nutritional-info line(s) that AccuChef appends
@@ -3028,8 +3048,12 @@ def _parse_mm_block(block):
     ).strip()
     rest_text = re.sub(r'\naccupoints\s*=.*$', '', rest_text, flags=re.IGNORECASE).strip()
 
-    # Re-join word-wrap artefacts; preserve intentional blank lines
-    directions = _mm_rejoin_wrapped(rest_text) if rest_text else None
+    # Re-join word-wrap artefacts only for plain-text Meal-Master.
+    # RTF content already has correct line breaks from \par → \n conversion.
+    if not was_rtf:
+        directions = _mm_rejoin_wrapped(rest_text) if rest_text else None
+    else:
+        directions = rest_text if rest_text else None
 
     flat_ings = [ing for g in ing_groups for ing in g['ingredients']]
 
