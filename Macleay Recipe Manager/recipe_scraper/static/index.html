@@ -2584,7 +2584,7 @@ const PRINT_CSS = `
   .source { text-align:center; font-size:10pt; margin-bottom:1pt; }
   .yield  { text-align:center; font-size:11pt; margin-bottom:8pt; }
   .note   { font-style:italic; margin-bottom:8pt; font-size:10.5pt; line-height:1.4; }
-  .ings { column-count:2; column-gap:1.6em; margin-bottom:26pt; }
+  .ings { column-count:2; column-gap:1.6em; margin-bottom:26pt; margin-left:1.8em; margin-right:1.8em; }
   .ing  { font-size:11pt; line-height:1.35; margin:0 0 1.5pt; break-inside:avoid; }
   .ing-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:0 0 1pt; break-inside:avoid; break-after:avoid; }
   .directions { font-size:11pt; line-height:1.45; text-align:justify; margin:0 0 3pt 0; }
@@ -2628,7 +2628,8 @@ function buildRecipeBlock(r, factor) {
   const dirText = (r.directions_text || "").trim();
   const stepSections = dirText ? `<div class="directions-text">${escP(dirText)}</div>` : "";
 
-  const sourceHtml = r.site_name ? `<div class="source">${escP(r.site_name)}</div>` : "";
+  const sourceHtml = (r.site_name && r.site_name.trim().toLowerCase() !== "accuchef import")
+    ? `<div class="source">${escP(r.site_name)}</div>` : "";
   const yieldHtml  = printServings ? `<div class="yield">Yield: ${escP(printServings)}</div>` : "";
   const noteHtml   = r.note ? `<div class="note">Note: ${escP(r.note)}</div>` : "";
 
