@@ -364,7 +364,8 @@ def init_db():
                 conn.execute("DROP TABLE group_meal_members_old")
             else:
                 # Already migrated – just add any missing optional columns
-                for col in ["servings REAL DEFAULT NULL", "recipe_servings TEXT DEFAULT NULL"]:
+                for col in ["servings REAL DEFAULT NULL", "recipe_servings TEXT DEFAULT NULL",
+                            "recipe_id INTEGER DEFAULT NULL"]:
                     try:
                         conn.execute(f"ALTER TABLE group_meal_members ADD COLUMN {col}")
                     except Exception:
@@ -375,7 +376,8 @@ def init_db():
                 CREATE TABLE group_meal_members (
                     row_id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     group_id        INTEGER NOT NULL,
-                    meal_id         INTEGER NOT NULL,
+                    meal_id         INTEGER DEFAULT NULL,
+                    recipe_id       INTEGER DEFAULT NULL,
                     servings        REAL    DEFAULT NULL,
                     sort_order      INTEGER DEFAULT 0,
                     recipe_servings TEXT    DEFAULT NULL
@@ -1550,10 +1552,13 @@ def list_group_meals():
     group_ids = [g["id"] for g in groups]
     placeholders = ",".join("?" * len(group_ids))
     all_members = db.execute(
-        f"""SELECT gm.group_id, gm.row_id AS slot_id, m.id, m.name,
+        f"""SELECT gm.group_id, gm.row_id AS slot_id,
+                   gm.meal_id, m.name AS meal_name,
+                   gm.recipe_id, r.title AS recipe_title,
                    gm.servings, gm.recipe_servings
             FROM group_meal_members gm
-            JOIN meals m ON m.id = gm.meal_id
+            LEFT JOIN meals   m ON m.id = gm.meal_id
+            LEFT JOIN recipes r ON r.id = gm.recipe_id
             WHERE gm.group_id IN ({placeholders})
             ORDER BY gm.group_id, gm.sort_order, gm.row_id""",
         group_ids,
@@ -1562,6 +1567,14 @@ def list_group_meals():
     for ml in all_members:
         gid = ml["group_id"]
         md  = dict(ml)
+        if md.get("recipe_id"):
+            md["type"] = "recipe"
+            md["id"]   = md["recipe_id"]
+            md["name"] = md.get("recipe_title") or "Unknown Recipe"
+        else:
+            md["type"] = "meal"
+            md["id"]   = md["meal_id"]
+            md["name"] = md.get("meal_name") or "Unknown Meal"
         try:
             md["recipe_servings"] = json.loads(md["recipe_servings"]) if md["recipe_servings"] else {}
         except Exception:
@@ -1611,6 +1624,20 @@ def add_meal_to_group(gid):
     db = get_db()
     cur = db.execute(
         "INSERT INTO group_meal_members (group_id, meal_id) VALUES (?,?)", (gid, mid)
+    )
+    db.commit()
+    return jsonify({"ok": True, "slot_id": cur.lastrowid})
+
+
+@app.route("/group-meals/<int:gid>/recipes", methods=["POST"])
+def add_recipe_to_group(gid):
+    data = request.get_json()
+    rid  = data.get("recipe_id")
+    if not rid:
+        return jsonify({"error": "recipe_id required"}), 400
+    db  = get_db()
+    cur = db.execute(
+        "INSERT INTO group_meal_members (group_id, recipe_id) VALUES (?,?)", (gid, rid)
     )
     db.commit()
     return jsonify({"ok": True, "slot_id": cur.lastrowid})
