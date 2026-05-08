@@ -5041,6 +5041,9 @@ function renderShoppingList() {
 // ── Ingredient combining helpers ──────────────────────────────
 
 function parseIngForCombine(text) {
+  // Normalise first: strip ~ markers and (...) alternate measurements so they
+  // don't pollute the name key or display label used for combining/categories.
+  text = shopIng(text || '');
   text = text.replace(/^[\u25A1\u25A2\u25FB\u25FC\u2610\u2611\u2612\u2713\u2714\s]+/, '').trim();
   // Strip a single leading dash or en-dash (AccuChef sub-item prefix like "- 1 cup Salt")
   text = text.replace(/^[-–]\s+/, '').trim();
@@ -5081,6 +5084,7 @@ function parseIngForCombine(text) {
 function ingNameKey(name) {
   return name
     .toLowerCase()
+    .replace(/~/g, '')           // strip any residual ~ markers
     .replace(/^[-–—\s]+/, '')   // strip leading dashes/em-dashes
     .replace(/\(.*?\)/g, '')   // strip (notes)
     .replace(/,\s*(optional|to taste|if desired|as needed|or to taste|for serving|for garnish|freshly ground|ground)\s*$/i, '') // strip common annotations only
