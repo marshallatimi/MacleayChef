@@ -1402,13 +1402,17 @@ function renderGrid() {
   }
 }
 
+let _savedListScrollY = 0;
+
 function openRecipe(id) {
+  _savedListScrollY = window.scrollY;          // remember position before leaving the list
   selectedRecipe = savedRecipes.find(r => r.id === id);
   if (!selectedRecipe) return;
   _recipeHistory = [];
   _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
   document.getElementById("saved-list-view").hidden = true;
   document.getElementById("saved-detail-view").hidden = false;
+  window.scrollTo(0, 0);                       // start recipe detail at the top
   renderSavedDetail();
   selectedRecipe.view_count = (selectedRecipe.view_count || 0) + 1;
   fetch(`/recipes/${id}/view`, {method:"POST"});
@@ -1418,6 +1422,8 @@ function backToList() {
   selectedRecipe = null;
   document.getElementById("saved-list-view").hidden = false;
   document.getElementById("saved-detail-view").hidden = true;
+  // Restore scroll after the list is visible and laid out again
+  requestAnimationFrame(() => window.scrollTo(0, _savedListScrollY));
 }
 
 function renderSavedDetail() {
