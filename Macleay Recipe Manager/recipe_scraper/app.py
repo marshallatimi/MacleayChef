@@ -1542,6 +1542,21 @@ def set_meal_recipe_servings(mid, rid):
     return jsonify({"ok": True})
 
 
+@app.route("/meals/<int:mid>/recipes/reorder", methods=["PATCH"])
+def reorder_meal_recipes(mid):
+    """Accepts {"order": [recipe_id1, recipe_id2, ...]} and updates sort_order."""
+    data  = request.get_json()
+    order = data.get("order", [])
+    db    = get_db()
+    for i, rid in enumerate(order):
+        db.execute(
+            "UPDATE meal_recipes SET sort_order=? WHERE meal_id=? AND recipe_id=?",
+            (i, mid, rid)
+        )
+    db.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/group-meals", methods=["GET"])
 def list_group_meals():
     db = get_db()
