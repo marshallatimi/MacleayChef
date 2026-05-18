@@ -1506,8 +1506,13 @@ function addCategoryInput(ctx) {
     : (ctx === "meal" && selectedMeal)
       ? (selectedMeal.categories || (selectedMeal.category ? [selectedMeal.category] : []))
       : [];
-  const allCats = [...new Set(savedRecipes.flatMap(r => r.categories || (r.category ? [r.category] : [])))];
-  const available = allCats.filter(c => !currentCats.includes(c)).sort();
+  // Pool categories from both recipes and meals so any category created in either
+  // section shows up as a suggestion everywhere.
+  const allCats = [...new Set([
+    ...savedRecipes.flatMap(r => r.categories || (r.category ? [r.category] : [])),
+    ...(savedMeals || []).flatMap(m => m.categories || (m.category ? [m.category] : []))
+  ])].sort();
+  const available = allCats.filter(c => !currentCats.includes(c));
 
   let activeIdx = -1;
 
