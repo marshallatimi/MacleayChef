@@ -265,7 +265,7 @@ def init_db():
             except Exception:
                 pass
         for col in ["categories TEXT DEFAULT NULL", "default_servings REAL DEFAULT NULL",
-                    "notes TEXT DEFAULT NULL"]:
+                    "notes TEXT DEFAULT NULL", "image TEXT DEFAULT NULL"]:
             try:
                 conn.execute(f"ALTER TABLE meals ADD COLUMN {col}")
             except Exception:
@@ -315,7 +315,7 @@ def init_db():
                 created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        for col in ["default_servings REAL DEFAULT NULL"]:
+        for col in ["default_servings REAL DEFAULT NULL", "image TEXT DEFAULT NULL"]:
             try: conn.execute(f"ALTER TABLE group_meals ADD COLUMN {col}")
             except Exception: pass
         # group_meal_members – must allow the same meal multiple times in one group.
@@ -1396,6 +1396,80 @@ def delete_image(rid):
         except OSError:
             pass
     db.execute("UPDATE recipes SET image=NULL WHERE id=?", (rid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/meals/<int:mid>/image", methods=["POST"])
+def update_meal_image(mid):
+    db = get_db()
+    if "file" in request.files:
+        f = request.files["file"]
+        if f and f.filename:
+            ext = os.path.splitext(f.filename)[1].lower()
+            os.makedirs(UPLOADS_DIR, exist_ok=True)
+            filename = f"meal_{mid}{ext}"
+            f.save(os.path.join(UPLOADS_DIR, filename))
+            url = f"/static/uploads/{filename}"
+            db.execute("UPDATE meals SET image=? WHERE id=?", (url, mid))
+            db.commit()
+            return jsonify({"image": url})
+    data = request.get_json(silent=True) or {}
+    url = data.get("url", "").strip()
+    if url:
+        db.execute("UPDATE meals SET image=? WHERE id=?", (url, mid))
+        db.commit()
+        return jsonify({"image": url})
+    return jsonify({"error": "No image provided"}), 400
+
+
+@app.route("/meals/<int:mid>/image", methods=["DELETE"])
+def delete_meal_image(mid):
+    db = get_db()
+    row = db.execute("SELECT image FROM meals WHERE id=?", (mid,)).fetchone()
+    if row and row["image"] and row["image"].startswith("/static/uploads/"):
+        try:
+            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(row["image"])))
+        except OSError:
+            pass
+    db.execute("UPDATE meals SET image=NULL WHERE id=?", (mid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/group-meals/<int:gid>/image", methods=["POST"])
+def update_group_meal_image(gid):
+    db = get_db()
+    if "file" in request.files:
+        f = request.files["file"]
+        if f and f.filename:
+            ext = os.path.splitext(f.filename)[1].lower()
+            os.makedirs(UPLOADS_DIR, exist_ok=True)
+            filename = f"gm_{gid}{ext}"
+            f.save(os.path.join(UPLOADS_DIR, filename))
+            url = f"/static/uploads/{filename}"
+            db.execute("UPDATE group_meals SET image=? WHERE id=?", (url, gid))
+            db.commit()
+            return jsonify({"image": url})
+    data = request.get_json(silent=True) or {}
+    url = data.get("url", "").strip()
+    if url:
+        db.execute("UPDATE group_meals SET image=? WHERE id=?", (url, gid))
+        db.commit()
+        return jsonify({"image": url})
+    return jsonify({"error": "No image provided"}), 400
+
+
+@app.route("/group-meals/<int:gid>/image", methods=["DELETE"])
+def delete_group_meal_image(gid):
+    db = get_db()
+    row = db.execute("SELECT image FROM group_meals WHERE id=?", (gid,)).fetchone()
+    if row and row["image"] and row["image"].startswith("/static/uploads/"):
+        try:
+            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(row["image"])))
+        except OSError:
+            pass
+    db.execute("UPDATE group_meals SET image=NULL WHERE id=?", (gid,))
     db.commit()
     return jsonify({"ok": True})
 

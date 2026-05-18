@@ -1648,6 +1648,9 @@ async function copyCurrentMeal() {
   openMeal(newMeal.id);
 }
 
+// _imgModalCtx: 'recipe' | 'meal' | 'group-meal'
+let _imgModalCtx = 'recipe';
+
 async function removeRecipePhoto() {
   if (!selectedRecipe) return;
   if (!await showConfirm("Remove this photo?")) return;
@@ -1659,7 +1662,30 @@ async function removeRecipePhoto() {
   showToast("Photo removed");
 }
 
-function openImageModal() {
+async function removeMealPhoto() {
+  if (!selectedMeal) return;
+  if (!await showConfirm("Remove this photo?")) return;
+  await fetch(`/meals/${selectedMeal.id}/image`, { method: "DELETE" });
+  selectedMeal.image = null;
+  const idx = savedMeals.findIndex(m => m.id === selectedMeal.id);
+  if (idx !== -1) savedMeals[idx].image = null;
+  renderMealDetail();
+  showToast("Photo removed");
+}
+
+async function removeGroupMealPhoto() {
+  if (!selectedGroupMeal) return;
+  if (!await showConfirm("Remove this photo?")) return;
+  await fetch(`/group-meals/${selectedGroupMeal.id}/image`, { method: "DELETE" });
+  selectedGroupMeal.image = null;
+  const idx = (savedGroupMeals||[]).findIndex(g => g.id === selectedGroupMeal.id);
+  if (idx !== -1 && savedGroupMeals) savedGroupMeals[idx].image = null;
+  renderGroupMealDetail();
+  showToast("Photo removed");
+}
+
+function openImageModal(ctx) {
+  _imgModalCtx = ctx || 'recipe';
   document.getElementById("img-file-input").value = "";
   document.getElementById("img-url-input").value = "";
   document.getElementById("img-modal-backdrop").hidden = false;
@@ -1671,29 +1697,47 @@ function closeImageModal(e) {
 }
 
 async function saveImage() {
-  if (!selectedRecipe) return;
+  const ctx = _imgModalCtx || 'recipe';
+  const id = ctx === 'recipe'     ? selectedRecipe?.id
+            : ctx === 'meal'      ? selectedMeal?.id
+            : selectedGroupMeal?.id;
+  if (!id) return;
+  const endpoint = ctx === 'recipe'    ? `/recipes/${id}/image`
+                 : ctx === 'meal'      ? `/meals/${id}/image`
+                 : `/group-meals/${id}/image`;
+
   const file = document.getElementById("img-file-input").files[0];
-  const url = document.getElementById("img-url-input").value.trim();
+  const url  = document.getElementById("img-url-input").value.trim();
   let imageUrl = null;
 
   if (file) {
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch(`/recipes/${selectedRecipe.id}/image`, {method:"POST", body:fd});
+    const res = await fetch(endpoint, {method:"POST", body:fd});
     if (res.ok) imageUrl = (await res.json()).image;
   } else if (url) {
-    const res = await fetch(`/recipes/${selectedRecipe.id}/image`, {
-      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url})
-    });
+    const res = await fetch(endpoint, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({url})});
     if (res.ok) imageUrl = (await res.json()).image;
   }
 
   if (imageUrl) {
-    selectedRecipe.image = imageUrl;
-    const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
-    if (idx !== -1) savedRecipes[idx].image = imageUrl;
     document.getElementById("img-modal-backdrop").hidden = true;
-    renderSavedDetail();
+    if (ctx === 'recipe') {
+      selectedRecipe.image = imageUrl;
+      const idx = savedRecipes.findIndex(r => r.id === id);
+      if (idx !== -1) savedRecipes[idx].image = imageUrl;
+      renderSavedDetail();
+    } else if (ctx === 'meal') {
+      selectedMeal.image = imageUrl;
+      const idx = savedMeals.findIndex(m => m.id === id);
+      if (idx !== -1) savedMeals[idx].image = imageUrl;
+      renderMealDetail();
+    } else {
+      selectedGroupMeal.image = imageUrl;
+      const idx = (savedGroupMeals||[]).findIndex(g => g.id === id);
+      if (idx !== -1 && savedGroupMeals) savedGroupMeals[idx].image = imageUrl;
+      renderGroupMealDetail();
+    }
     showToast();
   }
 }
@@ -4381,8 +4425,16 @@ function renderMealDetail() {
       <div id="meal-recipe-browser" class="shop-browser" style="max-height:280px"></div>
     </div>` : `<p style="font-size:0.82rem;color:var(--muted);margin-top:0.6rem">All saved recipes are already in this meal.</p>`;
 
+  const mealHeroHtml = m.image
+    ? `<div class="hero-wrap">
+       <img class="hero" src="${esc(m.image)}" alt="${esc(m.name)}" onclick="openImageModal('meal')" style="cursor:pointer"/>
+       <div class="hero-change-overlay" onclick="openImageModal('meal')"><span>Change Photo</span></div>
+       <button class="hero-remove-btn" onclick="removeMealPhoto()" title="Remove photo" style="-webkit-app-region:no-drag;position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:28px;height:28px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;z-index:5">✕</button>
+     </div>`
+    : `<button class="hero-placeholder-btn" onclick="openImageModal('meal')">+ Add Photo</button>`;
+
   content.innerHTML = `
-    <div class="recipe-card"><div class="card-body">
+    <div class="recipe-card">${mealHeroHtml}<div class="card-body">
       <div class="recipe-toolbar">
         <div class="recipe-toolbar-left"></div>
         <div class="recipe-toolbar-right">
@@ -5727,8 +5779,16 @@ function renderGroupMealDetail() {
     </div>`;
 
   const dsVal = g.default_servings != null ? g.default_servings : "";
+  const gmHeroHtml = g.image
+    ? `<div class="hero-wrap">
+       <img class="hero" src="${esc(g.image)}" alt="${esc(g.name)}" onclick="openImageModal('group-meal')" style="cursor:pointer"/>
+       <div class="hero-change-overlay" onclick="openImageModal('group-meal')"><span>Change Photo</span></div>
+       <button class="hero-remove-btn" onclick="removeGroupMealPhoto()" title="Remove photo" style="-webkit-app-region:no-drag;position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:28px;height:28px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;z-index:5">✕</button>
+     </div>`
+    : `<button class="hero-placeholder-btn" onclick="openImageModal('group-meal')">+ Add Photo</button>`;
+
   content.innerHTML = `
-    <div class="recipe-card"><div class="card-body">
+    <div class="recipe-card">${gmHeroHtml}<div class="card-body">
       <div class="recipe-toolbar">
         <div class="recipe-toolbar-left"></div>
         <div class="recipe-toolbar-right">
