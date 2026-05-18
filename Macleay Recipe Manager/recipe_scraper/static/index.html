@@ -2619,9 +2619,9 @@ const PRINT_CSS = `
   body { font-family:'Comic Sans MS','Chalkboard SE','Comic Sans',cursive; font-size:11pt; color:#000; }
   .title  { text-align:center; font-weight:bold; font-size:14pt; margin-bottom:1pt; }
   .source { text-align:center; font-size:10pt; margin-bottom:1pt; }
-  .yield  { text-align:center; font-size:11pt; margin-bottom:8pt; }
+  .yield  { text-align:center; font-size:11pt; margin-bottom:16pt; }
   .note   { font-style:italic; margin-bottom:8pt; font-size:10.5pt; line-height:1.4; }
-  .ings { column-count:2; column-gap:1.6em; margin-bottom:26pt; margin-left:0.3em; margin-right:0.3em; }
+  .ings { column-count:2; column-gap:1.6em; margin-bottom:26pt; margin-left:0.6em; margin-right:0.6em; }
   .ing  { font-size:11pt; line-height:1.35; margin:0 0 1.5pt; break-inside:avoid; }
   .ing-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:0 0 1pt; break-inside:avoid; break-after:avoid; }
   .directions { font-size:11pt; line-height:1.45; text-align:justify; margin:0 0 3pt 0; }
@@ -2652,14 +2652,19 @@ function buildRecipeBlock(r, factor) {
 
   // Ingredients: CSS two-column flow — no paired rows, no artificial gaps
   let ingItems = "";
+  let totalIngs = 0;
   ig.forEach(g => {
     if (multiIngGroup && g.purpose)
       ingItems += `<div class="ing-hdr">${escP(g.purpose)}</div>`;
     (g.ingredients || []).filter(t => t && t.trim()).forEach(t => {
       ingItems += `<div class="ing">${escP(dispIng(t))}</div>`;
+      totalIngs++;
     });
   });
-  const ingSections = `<div class="ings">${ingItems}</div>`;
+  // Use a single column for 1–2 ingredients so they stay on the left half;
+  // switch to two columns at 3+ ingredients.
+  const colStyle = totalIngs <= 2 ? 'column-count:1' : '';
+  const ingSections = `<div class="ings"${colStyle ? ` style="${colStyle}"` : ''}>${ingItems}</div>`;
 
   // Directions — plain text block (white-space:pre-wrap preserves newlines/indentation)
   const dirText = (r.directions_text || "").trim();
