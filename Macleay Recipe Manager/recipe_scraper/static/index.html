@@ -592,6 +592,16 @@
         <input type="text" id="meal-search" placeholder="Search meals…"
           oninput="_dRenderMealGrid()"
           style="padding:0.35rem 0.65rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:0.85rem;min-width:160px;flex:1;max-width:280px"/>
+        <label style="font-size:0.85rem;color:var(--muted)">Sort:</label>
+        <select id="meal-sort-select" onchange="applyMealSort()"
+          style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:0.82rem">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="az">A → Z</option>
+          <option value="za">Z → A</option>
+          <option value="category">By Category</option>
+          <option value="count">Most Recipes</option>
+        </select>
         <div id="meal-cat-filter-wrap" style="position:relative;display:inline-block">
           <button id="meal-cat-filter-btn" onclick="toggleMealCatFilter(event)"
             style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem;cursor:pointer;white-space:nowrap;min-width:130px;text-align:left">
@@ -1083,6 +1093,7 @@ let _recipeHistory = [];     // undo stack — deep-cloned recipe states
 let _prevRecipeState = null; // state as of last save, pushed to history on next edit
 let _recipeUndoing = false;  // guard: don't push to history during an undo restore
 let currentSort = localStorage.getItem("recipeSort") || "az";
+let currentMealSort = localStorage.getItem("mealSort") || "newest";
 let currentCatFilter = localStorage.getItem("recipeCatFilter") || "";
 let shoppingList = JSON.parse(localStorage.getItem("shoppingList") || "[]");
 let savedMeals = [];
@@ -1231,6 +1242,12 @@ function applySort() {
   currentSort = document.getElementById("sort-select").value;
   localStorage.setItem("recipeSort", currentSort);
   renderGrid();
+}
+
+function applyMealSort() {
+  currentMealSort = document.getElementById("meal-sort-select").value;
+  localStorage.setItem("mealSort", currentMealSort);
+  renderMealGrid();
 }
 
 // ── Multi-category filter ──────────────────────────────────────
@@ -4263,6 +4280,8 @@ async function loadMeals() {
   try {
     savedMeals = await (await fetch("/meals")).json();
     updateMealsCount();
+    const sortSel = document.getElementById("meal-sort-select");
+    if (sortSel) sortSel.value = currentMealSort;
     renderMealGrid();
   } catch {}
 }
@@ -4280,6 +4299,18 @@ function renderMealGrid() {
     }
     return true;
   });
+  switch (currentMealSort) {
+    case "newest":   filtered.sort((a,b) => b.id - a.id); break;
+    case "oldest":   filtered.sort((a,b) => a.id - b.id); break;
+    case "az":       filtered.sort((a,b) => (a.name||"").localeCompare(b.name||"")); break;
+    case "za":       filtered.sort((a,b) => (b.name||"").localeCompare(a.name||"")); break;
+    case "category": filtered.sort((a,b) => {
+      const ca = (a.categories&&a.categories[0]) || a.category || "zzz";
+      const cb = (b.categories&&b.categories[0]) || b.category || "zzz";
+      return ca.localeCompare(cb) || (a.name||"").localeCompare(b.name||"");
+    }); break;
+    case "count":    filtered.sort((a,b) => (b.recipes||[]).length - (a.recipes||[]).length); break;
+  }
   if (!filtered.length) {
     container.className = "recipe-grid";
     container.innerHTML = `<div class="empty-state"><div class="big-icon">🍽️</div><p>${savedMeals.length ? "No meals match your search." : "No meals yet.<br>Create one to group recipes together."}</p></div>`;
