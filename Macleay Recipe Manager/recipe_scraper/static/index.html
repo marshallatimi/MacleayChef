@@ -4288,11 +4288,11 @@ function renderMealGrid() {
   if (mode === "list") {
     container.className = "list-view";
     container.innerHTML = filtered.map(m => {
-      const thumb = m.recipes.find(r => r.image);
+      const thumbSrc = m.image || (m.recipes.find(r => r.image) || {}).image || null;
       const cats = (m.categories && m.categories.length ? m.categories : (m.category ? [m.category] : []));
       const meta = [`${m.recipes.length} recipe${m.recipes.length===1?"":"s"}`, cats.join(", ")].filter(Boolean).join(" · ");
       return `<div class="list-card" onclick="openMeal(${m.id})">
-        ${thumb ? `<img class="list-thumb" src="${esc(thumb.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍽️</div>`}
+        ${thumbSrc ? `<img class="list-thumb" src="${esc(thumbSrc)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍽️</div>`}
         <div class="list-info">
           <div class="list-title">${esc(m.name)}</div>
           ${meta ? `<div class="list-meta">${esc(meta)}</div>` : ""}
@@ -4303,9 +4303,9 @@ function renderMealGrid() {
   } else {
     container.className = "recipe-grid";
     container.innerHTML = filtered.map(m => {
-      const thumb = m.recipes.find(r => r.image);
-      const thumbHtml = thumb
-        ? `<img src="${esc(thumb.image)}" alt="${esc(m.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
+      const thumbSrc = m.image || (m.recipes.find(r => r.image) || {}).image || null;
+      const thumbHtml = thumbSrc
+        ? `<img src="${esc(thumbSrc)}" alt="${esc(m.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
         : `<div class="grid-card-img-placeholder">🍽️</div>`;
       const badges = m.recipes.slice(0,3).map(r => `<span class="grid-cat-badge">${esc(r.title)}</span>`).join(" ");
       const more = m.recipes.length > 3 ? ` <span class="grid-cat-badge">+${m.recipes.length-3} more</span>` : "";
@@ -5457,7 +5457,7 @@ function renderGroupMealList() {
     container.innerHTML = gmFiltered.map(g => {
       const n = g.meals ? g.meals.length : 0;
       return `<div class="list-card" onclick="openGroupMeal(${g.id})">
-        <div class="list-thumb-ph">🍴</div>
+        ${g.image ? `<img class="list-thumb" src="${esc(g.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍴</div>`}
         <div class="list-info">
           <div class="list-title">${esc(g.name)}</div>
           <div class="list-meta">${n} meal${n!==1?"s":""}</div>
@@ -5469,9 +5469,12 @@ function renderGroupMealList() {
     container.className = "recipe-grid";
     container.innerHTML = gmFiltered.map(g => {
       const n = g.meals ? g.meals.length : 0;
+      const gmThumbHtml = g.image
+        ? `<img src="${esc(g.image)}" alt="${esc(g.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
+        : `<div class="grid-card-img-placeholder">🍴</div>`;
       return `<div class="grid-card" onclick="openGroupMeal(${g.id})">
         <button class="grid-card-del" onclick="(async(e)=>{e.stopPropagation();await deleteGroupMealById(${g.id})})(event)" title="Delete">✕</button>
-        <div class="grid-card-img-placeholder">🍴</div>
+        ${gmThumbHtml}
         <div class="grid-card-body">
           <div class="grid-card-title">${esc(g.name)}</div>
           <div class="grid-card-meta">${n} meal${n!==1?"s":""}</div>
