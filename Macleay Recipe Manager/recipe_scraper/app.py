@@ -180,22 +180,58 @@ def startup():
     # Make sure the active cookbook has up-to-date schema
     init_db()
 
-    # Auto-backup: take a daily backup of the active cookbook
+    # Auto-backup: take a daily backup of ALL known cookbooks (regular + linked)
     try:
         import datetime, shutil
+        from collections import defaultdict
         backup_dir = os.path.join(DATA_DIR, "backups")
         os.makedirs(backup_dir, exist_ok=True)
         today = datetime.date.today().strftime("%Y-%m-%d")
-        cb_name = os.path.splitext(os.path.basename(_active_db["path"]))[0]
-        today_backup = os.path.join(backup_dir, f"{cb_name}_{today}.cookbook")
-        if not os.path.exists(today_backup):
-            shutil.copy2(_active_db["path"], today_backup)
-            # Keep last 30 backups
-            all_backups = sorted([
-                os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
-                if f.endswith(".cookbook")
-            ], key=os.path.getmtime)
-            for old in all_backups[:-30]:
+
+        # Collect every cookbook path — regular cookbooks in COOKBOOKS_DIR plus
+        # any linked external paths stored in settings.json
+        all_paths = []
+        seen = set()
+        for fname in sorted(os.listdir(COOKBOOKS_DIR)):
+            if fname.endswith(".cookbook"):
+                p = os.path.join(COOKBOOKS_DIR, fname)
+                norm = os.path.normpath(p)
+                if norm not in seen:
+                    seen.add(norm)
+                    all_paths.append(p)
+        s_cfg = load_settings()
+        for lpath in s_cfg.get("linkedCookbooks", []):
+            norm = os.path.normpath(lpath)
+            if os.path.exists(lpath) and norm not in seen:
+                seen.add(norm)
+                all_paths.append(lpath)
+
+        if not all_paths:
+            all_paths = [_active_db["path"]]
+
+        for cb_path in all_paths:
+            if not os.path.exists(cb_path):
+                continue
+            cb_name = os.path.splitext(os.path.basename(cb_path))[0]
+            today_backup = os.path.join(backup_dir, f"{cb_name}_{today}.cookbook")
+            if not os.path.exists(today_backup):
+                shutil.copy2(cb_path, today_backup)
+
+        # Prune: keep last 30 backups per cookbook
+        all_backup_files = sorted(
+            [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
+             if f.endswith(".cookbook")],
+            key=os.path.getmtime
+        )
+        by_cb: dict = defaultdict(list)
+        for fp in all_backup_files:
+            stem = os.path.basename(fp)
+            # strip timestamp suffix: {name}_{YYYY-MM-DD}[_{HH-MM-SS}]
+            m = re.match(r'^(.+?)_(\d{4}-\d{2}-\d{2}(?:_\d{2}-\d{2}-\d{2})?)\.cookbook$', stem)
+            key = m.group(1) if m else stem
+            by_cb[key].append(fp)
+        for cb_files in by_cb.values():
+            for old in sorted(cb_files, key=os.path.getmtime)[:-30]:
                 try: os.remove(old)
                 except OSError: pass
     except Exception:
