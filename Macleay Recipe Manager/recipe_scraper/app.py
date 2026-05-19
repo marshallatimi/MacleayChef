@@ -1372,7 +1372,7 @@ def update_image(rid):
             os.makedirs(UPLOADS_DIR, exist_ok=True)
             filename = f"{rid}{ext}"
             f.save(os.path.join(UPLOADS_DIR, filename))
-            url = f"/static/uploads/{filename}"
+            url = f"/static/uploads/{filename}?v={int(time.time())}"
             db.execute("UPDATE recipes SET image=? WHERE id=?", (url, rid))
             db.commit()
             return jsonify({"image": url})
@@ -1392,7 +1392,8 @@ def delete_image(rid):
     row = db.execute("SELECT image FROM recipes WHERE id=?", (rid,)).fetchone()
     if row and row["image"] and row["image"].startswith("/static/uploads/"):
         try:
-            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(row["image"])))
+            clean_path = row["image"].split("?")[0]
+            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(clean_path)))
         except OSError:
             pass
     db.execute("UPDATE recipes SET image=NULL WHERE id=?", (rid,))
@@ -1410,7 +1411,7 @@ def update_meal_image(mid):
             os.makedirs(UPLOADS_DIR, exist_ok=True)
             filename = f"meal_{mid}{ext}"
             f.save(os.path.join(UPLOADS_DIR, filename))
-            url = f"/static/uploads/{filename}"
+            url = f"/static/uploads/{filename}?v={int(time.time())}"
             db.execute("UPDATE meals SET image=? WHERE id=?", (url, mid))
             db.commit()
             return jsonify({"image": url})
@@ -1429,7 +1430,8 @@ def delete_meal_image(mid):
     row = db.execute("SELECT image FROM meals WHERE id=?", (mid,)).fetchone()
     if row and row["image"] and row["image"].startswith("/static/uploads/"):
         try:
-            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(row["image"])))
+            clean_path = row["image"].split("?")[0]
+            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(clean_path)))
         except OSError:
             pass
     db.execute("UPDATE meals SET image=NULL WHERE id=?", (mid,))
@@ -1447,7 +1449,7 @@ def update_group_meal_image(gid):
             os.makedirs(UPLOADS_DIR, exist_ok=True)
             filename = f"gm_{gid}{ext}"
             f.save(os.path.join(UPLOADS_DIR, filename))
-            url = f"/static/uploads/{filename}"
+            url = f"/static/uploads/{filename}?v={int(time.time())}"
             db.execute("UPDATE group_meals SET image=? WHERE id=?", (url, gid))
             db.commit()
             return jsonify({"image": url})
@@ -1466,7 +1468,8 @@ def delete_group_meal_image(gid):
     row = db.execute("SELECT image FROM group_meals WHERE id=?", (gid,)).fetchone()
     if row and row["image"] and row["image"].startswith("/static/uploads/"):
         try:
-            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(row["image"])))
+            clean_path = row["image"].split("?")[0]
+            os.remove(os.path.join(UPLOADS_DIR, os.path.basename(clean_path)))
         except OSError:
             pass
     db.execute("UPDATE group_meals SET image=NULL WHERE id=?", (gid,))
