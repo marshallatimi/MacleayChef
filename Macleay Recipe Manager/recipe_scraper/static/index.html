@@ -1136,6 +1136,7 @@ function navForward() {
 }
 
 function showTab(tab) {
+  window.scrollTo(0, 0);
   ["scrape","saved","shopping","meals","groupmeal","cookbooks"].forEach(t => {
     document.getElementById(`tab-${t}`).hidden = tab !== t;
     document.getElementById(`tab-${t}-btn`).classList.toggle("active", tab === t);
@@ -4371,11 +4372,15 @@ function updateMealCatFilterBtn() {
     : "All categories ▾";
 }
 
+let _mealListScrollY = 0;
+
 function openMeal(id) {
+  _mealListScrollY = window.scrollY;
   selectedMeal = savedMeals.find(m => m.id === id);
   if (!selectedMeal) return;
   document.getElementById("meals-list-view").hidden = true;
   document.getElementById("meals-detail-view").hidden = false;
+  window.scrollTo(0, 0);
   renderMealDetail();
 }
 
@@ -4384,6 +4389,7 @@ function backToMealsList() {
   document.getElementById("meals-list-view").hidden = false;
   document.getElementById("meals-detail-view").hidden = true;
   renderMealGrid();
+  requestAnimationFrame(() => window.scrollTo(0, _mealListScrollY));
 }
 
 function renderMealDetail() {
@@ -5545,11 +5551,15 @@ async function createGroupMeal() {
   openGroupMeal(gm.id);
 }
 
+let _gmListScrollY = 0;
+
 function openGroupMeal(gid) {
+  _gmListScrollY = window.scrollY;
   selectedGroupMeal = savedGroupMeals.find(g => g.id === gid);
   if (!selectedGroupMeal) return;
   document.getElementById("groupmeal-list-view").hidden   = true;
   document.getElementById("groupmeal-detail-view").hidden = false;
+  window.scrollTo(0, 0);
   renderGroupMealDetail();
 }
 
@@ -5557,6 +5567,7 @@ function backToGroupMealList() {
   selectedGroupMeal = null;
   document.getElementById("groupmeal-list-view").hidden   = false;
   document.getElementById("groupmeal-detail-view").hidden = true;
+  requestAnimationFrame(() => window.scrollTo(0, _gmListScrollY));
 }
 
 let _gmExpandedMeals = new Set(); // tracks which meal IDs are expanded
