@@ -255,6 +255,10 @@
 
     .saved-toast { position:fixed; bottom:1.5rem; right:1.5rem; background:#155724; color:#fff; padding:0.6rem 1.2rem; border-radius:8px; font-size:0.9rem; font-weight:600; opacity:0; transition:opacity 0.3s; pointer-events:none; z-index:999; }
     .saved-toast.show { opacity:1; }
+    .undo-toast { position:fixed; bottom:1.5rem; left:50%; transform:translateX(-50%); background:#333; color:#fff; padding:0.55rem 0.75rem 0.55rem 1.1rem; border-radius:8px; font-size:0.88rem; font-weight:600; opacity:0; transition:opacity 0.3s; pointer-events:none; z-index:10000; display:flex; align-items:center; gap:0.75rem; white-space:nowrap; box-shadow:0 4px 18px rgba(0,0,0,0.25); }
+    .undo-toast.show { opacity:1; pointer-events:auto; }
+    .undo-toast-btn { background:var(--red); color:#fff; border:none; border-radius:5px; padding:0.28rem 0.75rem; font-size:0.82rem; font-weight:700; cursor:pointer; transition:background 0.15s; }
+    .undo-toast-btn:hover { background:var(--red-dark); }
 
     .btn-row { display:flex; flex-wrap:wrap; gap:0.6rem; margin-top:1.6rem; }
     .btn { padding:0.6rem 1.2rem; border-radius:7px; border:none; font-size:0.9rem; font-weight:600; cursor:pointer; transition:background 0.15s; }
@@ -857,6 +861,10 @@
 </div>
 
 <div class="saved-toast" id="toast">Saved</div>
+<div class="undo-toast" id="undo-toast">
+  <span id="undo-toast-msg"></span>
+  <button class="undo-toast-btn" onclick="undoDelete()">Undo</button>
+</div>
 
 <div id="img-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeImageModal(event)">
   <div class="img-modal" onclick="event.stopPropagation()">
@@ -1147,6 +1155,7 @@ function navForward() {
 }
 
 function showTab(tab) {
+  _commitPendingDelete();
   window.scrollTo(0, 0);
   ["scrape","saved","shopping","meals","groupmeal","cookbooks"].forEach(t => {
     document.getElementById(`tab-${t}`).hidden = tab !== t;
@@ -1767,20 +1776,66 @@ function showToast(msg) {
   setTimeout(() => { t.classList.remove("show"); t.textContent = "Saved"; }, 1800);
 }
 
-async function deleteRecipe() {
-  if (!await showConfirm(`Delete "${selectedRecipe.title}"?`)) return;
-  await fetch(`/recipes/${selectedRecipe.id}`, {method:"DELETE"});
-  savedRecipes = savedRecipes.filter(r => r.id !== selectedRecipe.id);
-  updateSavedCount(); backToList(); renderGrid();
+// ── Undo-delete system ─────────────────────────────────────────────────────
+let _pendingDelete = null;
+
+function _commitPendingDelete() {
+  if (!_pendingDelete) return;
+  const endpoint = _pendingDelete.endpoint;
+  clearTimeout(_pendingDelete.timer);
+  _pendingDelete = null;
+  _hideUndoToast();
+  fetch(endpoint, { method: "DELETE" }).catch(() => {});
 }
 
-async function deleteRecipeById(id, e) {
+function _hideUndoToast() {
+  document.getElementById("undo-toast").classList.remove("show");
+}
+
+function undoDelete() {
+  if (!_pendingDelete) return;
+  clearTimeout(_pendingDelete.timer);
+  const restore = _pendingDelete.restore;
+  _pendingDelete = null;
+  _hideUndoToast();
+  restore();
+}
+
+function _scheduleDelete(endpoint, label, restore) {
+  _commitPendingDelete(); // flush any existing pending delete before starting a new one
+  _pendingDelete = {
+    endpoint,
+    restore,
+    timer: setTimeout(_commitPendingDelete, 6000)
+  };
+  const t = document.getElementById("undo-toast");
+  document.getElementById("undo-toast-msg").textContent = label;
+  t.classList.add("show");
+}
+
+function deleteRecipe() {
+  const r = selectedRecipe;
+  if (!r) return;
+  const idx = savedRecipes.findIndex(x => x.id === r.id);
+  savedRecipes = savedRecipes.filter(x => x.id !== r.id);
+  updateSavedCount(); backToList(); renderGrid();
+  _scheduleDelete(`/recipes/${r.id}`, `Deleted "${r.title}"`, () => {
+    savedRecipes.splice(Math.min(idx, savedRecipes.length), 0, r);
+    updateSavedCount(); updateCatFilter(); renderGrid();
+  });
+}
+
+function deleteRecipeById(id, e) {
   e.stopPropagation();
-  const r = savedRecipes.find(r => r.id === id);
-  if (!r || !await showConfirm(`Delete "${r.title}"?`)) return;
-  await fetch(`/recipes/${id}`, {method:"DELETE"});
-  savedRecipes = savedRecipes.filter(r => r.id !== id);
+  const r = savedRecipes.find(x => x.id === id);
+  if (!r) return;
+  const idx = savedRecipes.findIndex(x => x.id === id);
+  savedRecipes = savedRecipes.filter(x => x.id !== id);
   updateSavedCount(); updateCatFilter(); renderGrid();
+  _scheduleDelete(`/recipes/${id}`, `Deleted "${r.title}"`, () => {
+    savedRecipes.splice(Math.min(idx, savedRecipes.length), 0, r);
+    updateSavedCount(); updateCatFilter(); renderGrid();
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -4662,15 +4717,19 @@ async function createMeal() {
   }
 }
 
-async function deleteMealById(id, e, fromDetail=false) {
+function deleteMealById(id, e, fromDetail=false) {
   if (e) e.stopPropagation();
-  const m = savedMeals.find(m => m.id === id);
-  if (!m || !await showConfirm(`Delete "${m.name}"?`)) return;
-  await fetch(`/meals/${id}`, {method:"DELETE"});
-  savedMeals = savedMeals.filter(m => m.id !== id);
+  const m = savedMeals.find(x => x.id === id);
+  if (!m) return;
+  const idx = savedMeals.findIndex(x => x.id === id);
+  savedMeals = savedMeals.filter(x => x.id !== id);
   updateMealsCount();
   if (fromDetail) backToMealsList();
   else renderMealGrid();
+  _scheduleDelete(`/meals/${id}`, `Deleted "${m.name}"`, () => {
+    savedMeals.splice(Math.min(idx, savedMeals.length), 0, m);
+    updateMealsCount(); renderMealGrid();
+  });
 }
 
 // ══════════════════════════════════════════════════════════════
