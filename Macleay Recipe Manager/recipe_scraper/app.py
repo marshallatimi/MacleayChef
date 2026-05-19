@@ -1399,8 +1399,13 @@ def serve_upload(filename):
     return send_from_directory(UPLOADS_DIR, filename)
 
 
-def _save_resized_image(file_storage, dest_path, max_side=1200, quality=82):
-    """Resize and compress an uploaded image, saving as JPEG regardless of source format."""
+def _image_file_to_data_uri(file_storage, max_side=1200, quality=82):
+    """Resize, compress, and return a base64 data URI for an uploaded image.
+
+    Storing the image as a data URI inside the SQLite cookbook file means the
+    image travels with the .cookbook file — essential for linked cookbooks
+    shared across multiple computers via a network or cloud drive.
+    """
     img = PilImage.open(file_storage.stream)
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
@@ -1408,7 +1413,10 @@ def _save_resized_image(file_storage, dest_path, max_side=1200, quality=82):
     if max(w, h) > max_side:
         ratio = max_side / max(w, h)
         img = img.resize((int(w * ratio), int(h * ratio)), PilImage.LANCZOS)
-    img.save(dest_path, "JPEG", quality=quality, optimize=True)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=quality, optimize=True)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
 
 
 @app.route("/recipes/<int:rid>/image", methods=["POST"])
@@ -1417,13 +1425,10 @@ def update_image(rid):
     if "file" in request.files:
         f = request.files["file"]
         if f and f.filename:
-            os.makedirs(UPLOADS_DIR, exist_ok=True)
-            filename = f"{rid}.jpg"
-            _save_resized_image(f, os.path.join(UPLOADS_DIR, filename))
-            url = f"/static/uploads/{filename}?v={int(time.time())}"
-            db.execute("UPDATE recipes SET image=? WHERE id=?", (url, rid))
+            data_uri = _image_file_to_data_uri(f)
+            db.execute("UPDATE recipes SET image=? WHERE id=?", (data_uri, rid))
             db.commit()
-            return jsonify({"image": url})
+            return jsonify({"image": data_uri})
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").strip()
     if url:
@@ -1436,7 +1441,7 @@ def update_image(rid):
 @app.route("/recipes/<int:rid>/image", methods=["DELETE"])
 def delete_image(rid):
     db = get_db()
-    # Also remove the physical file if it's a local upload
+    # Clean up any legacy file-based upload (data URIs have nothing to delete)
     row = db.execute("SELECT image FROM recipes WHERE id=?", (rid,)).fetchone()
     if row and row["image"] and row["image"].startswith("/static/uploads/"):
         try:
@@ -1455,13 +1460,10 @@ def update_meal_image(mid):
     if "file" in request.files:
         f = request.files["file"]
         if f and f.filename:
-            os.makedirs(UPLOADS_DIR, exist_ok=True)
-            filename = f"meal_{mid}.jpg"
-            _save_resized_image(f, os.path.join(UPLOADS_DIR, filename))
-            url = f"/static/uploads/{filename}?v={int(time.time())}"
-            db.execute("UPDATE meals SET image=? WHERE id=?", (url, mid))
+            data_uri = _image_file_to_data_uri(f)
+            db.execute("UPDATE meals SET image=? WHERE id=?", (data_uri, mid))
             db.commit()
-            return jsonify({"image": url})
+            return jsonify({"image": data_uri})
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").strip()
     if url:
@@ -1492,13 +1494,10 @@ def update_group_meal_image(gid):
     if "file" in request.files:
         f = request.files["file"]
         if f and f.filename:
-            os.makedirs(UPLOADS_DIR, exist_ok=True)
-            filename = f"gm_{gid}.jpg"
-            _save_resized_image(f, os.path.join(UPLOADS_DIR, filename))
-            url = f"/static/uploads/{filename}?v={int(time.time())}"
-            db.execute("UPDATE group_meals SET image=? WHERE id=?", (url, gid))
+            data_uri = _image_file_to_data_uri(f)
+            db.execute("UPDATE group_meals SET image=? WHERE id=?", (data_uri, gid))
             db.commit()
-            return jsonify({"image": url})
+            return jsonify({"image": data_uri})
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").strip()
     if url:
@@ -2654,22 +2653,12 @@ def _image_to_exportable(image_val):
 
 def _image_from_import(image_val):
     """Restore an exported image value back to a storable form.
-    Base64 data-URIs are decoded and saved as local uploads."""
+    Data URIs are kept as-is so images travel with the cookbook file.
+    External URLs are kept as-is."""
     if not image_val:
         return None
     if image_val.startswith("data:"):
-        try:
-            header, b64data = image_val.split(",", 1)
-            ext = header.split(";")[0].split("/")[-1]
-            if ext not in ("jpeg", "jpg", "png", "gif", "webp"):
-                ext = "jpg"
-            filename = f"imported_{uuid.uuid4().hex[:12]}.{ext}"
-            os.makedirs(UPLOADS_DIR, exist_ok=True)
-            with open(os.path.join(UPLOADS_DIR, filename), "wb") as fh:
-                fh.write(base64.b64decode(b64data))
-            return f"/static/uploads/{filename}"
-        except Exception:
-            return None
+        return image_val                    # already portable — store directly
     return image_val                        # external URL — keep as-is
 
 
