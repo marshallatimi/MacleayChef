@@ -1591,7 +1591,16 @@ def add_recipe_to_meal(mid):
     rid = data.get("recipe_id")
     db = get_db()
     try:
-        db.execute("INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id) VALUES (?,?)", (mid, rid))
+        # Assign the next sort_order so new recipes always append in addition order,
+        # not in SQLite's undefined default order (which can appear alphabetical).
+        row = db.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM meal_recipes WHERE meal_id=?", (mid,)
+        ).fetchone()
+        next_order = (row[0] if row else -1) + 1
+        db.execute(
+            "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order) VALUES (?,?,?)",
+            (mid, rid, next_order)
+        )
         db.commit()
     except Exception:
         pass
