@@ -16,6 +16,7 @@ import tempfile
 import time
 import urllib.request
 import ssl
+from PIL import Image as PilImage
 
 # App version – overwritten by CI at build time via _version.py
 try:
@@ -1362,16 +1363,27 @@ def serve_upload(filename):
     return send_from_directory(UPLOADS_DIR, filename)
 
 
+def _save_resized_image(file_storage, dest_path, max_side=1200, quality=82):
+    """Resize and compress an uploaded image, saving as JPEG regardless of source format."""
+    img = PilImage.open(file_storage.stream)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    w, h = img.size
+    if max(w, h) > max_side:
+        ratio = max_side / max(w, h)
+        img = img.resize((int(w * ratio), int(h * ratio)), PilImage.LANCZOS)
+    img.save(dest_path, "JPEG", quality=quality, optimize=True)
+
+
 @app.route("/recipes/<int:rid>/image", methods=["POST"])
 def update_image(rid):
     db = get_db()
     if "file" in request.files:
         f = request.files["file"]
         if f and f.filename:
-            ext = os.path.splitext(f.filename)[1].lower()
             os.makedirs(UPLOADS_DIR, exist_ok=True)
-            filename = f"{rid}{ext}"
-            f.save(os.path.join(UPLOADS_DIR, filename))
+            filename = f"{rid}.jpg"
+            _save_resized_image(f, os.path.join(UPLOADS_DIR, filename))
             url = f"/static/uploads/{filename}?v={int(time.time())}"
             db.execute("UPDATE recipes SET image=? WHERE id=?", (url, rid))
             db.commit()
@@ -1407,10 +1419,9 @@ def update_meal_image(mid):
     if "file" in request.files:
         f = request.files["file"]
         if f and f.filename:
-            ext = os.path.splitext(f.filename)[1].lower()
             os.makedirs(UPLOADS_DIR, exist_ok=True)
-            filename = f"meal_{mid}{ext}"
-            f.save(os.path.join(UPLOADS_DIR, filename))
+            filename = f"meal_{mid}.jpg"
+            _save_resized_image(f, os.path.join(UPLOADS_DIR, filename))
             url = f"/static/uploads/{filename}?v={int(time.time())}"
             db.execute("UPDATE meals SET image=? WHERE id=?", (url, mid))
             db.commit()
@@ -1445,10 +1456,9 @@ def update_group_meal_image(gid):
     if "file" in request.files:
         f = request.files["file"]
         if f and f.filename:
-            ext = os.path.splitext(f.filename)[1].lower()
             os.makedirs(UPLOADS_DIR, exist_ok=True)
-            filename = f"gm_{gid}{ext}"
-            f.save(os.path.join(UPLOADS_DIR, filename))
+            filename = f"gm_{gid}.jpg"
+            _save_resized_image(f, os.path.join(UPLOADS_DIR, filename))
             url = f"/static/uploads/{filename}?v={int(time.time())}"
             db.execute("UPDATE group_meals SET image=? WHERE id=?", (url, gid))
             db.commit()
