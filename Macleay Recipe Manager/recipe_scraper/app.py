@@ -1538,6 +1538,48 @@ def delete_recipe(rid):
     return jsonify({"ok": True})
 
 
+@app.route("/recipes/<int:rid>/restore", methods=["POST"])
+def restore_recipe(rid):
+    """Re-insert a previously deleted recipe with its original ID (used by undo)."""
+    data = request.get_json() or {}
+    db = get_db()
+
+    def _js(v):
+        """Ensure lists/dicts are stored as JSON text."""
+        if v is None:
+            return None
+        return json.dumps(v) if isinstance(v, (dict, list)) else v
+
+    db.execute("""
+        INSERT OR REPLACE INTO recipes
+            (id, title, servings, servings_num, ingredient_groups, instruction_groups,
+             image, total_time, site_name, source_url, categories, category, notes,
+             view_count, created_at, base_recipe, scale_by_batch, directions_text)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        rid,
+        data.get("title"),
+        data.get("servings"),
+        data.get("servings_num"),
+        _js(data.get("ingredient_groups")),
+        _js(data.get("instruction_groups")),
+        data.get("image"),
+        data.get("total_time"),
+        data.get("site_name"),
+        data.get("source_url"),
+        _js(data.get("categories")),
+        data.get("category"),
+        data.get("notes"),
+        data.get("view_count", 0),
+        data.get("created_at"),
+        data.get("base_recipe"),
+        data.get("scale_by_batch", 0),
+        data.get("directions_text"),
+    ))
+    db.commit()
+    return jsonify({"ok": True, "id": rid})
+
+
 @app.route("/meals", methods=["GET"])
 def list_meals():
     db = get_db()
@@ -1597,6 +1639,38 @@ def delete_meal(mid):
     db.execute("DELETE FROM meals WHERE id=?", (mid,))
     db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/meals/<int:mid>/restore", methods=["POST"])
+def restore_meal(mid):
+    """Re-insert a previously deleted meal with its original ID (used by undo)."""
+    data = request.get_json() or {}
+    db = get_db()
+
+    def _js(v):
+        if v is None:
+            return None
+        return json.dumps(v) if isinstance(v, (dict, list)) else v
+
+    db.execute("""
+        INSERT OR REPLACE INTO meals (id, name, categories, category, default_servings, notes, image)
+        VALUES (?,?,?,?,?,?,?)
+    """, (
+        mid,
+        data.get("name"),
+        _js(data.get("categories")),
+        data.get("category"),
+        data.get("default_servings"),
+        data.get("notes"),
+        data.get("image"),
+    ))
+    for i, r in enumerate(data.get("recipes", [])):
+        db.execute(
+            "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, servings) VALUES (?,?,?,?)",
+            (mid, r["id"], i, r.get("recipe_servings")),
+        )
+    db.commit()
+    return jsonify({"ok": True, "id": mid})
 
 
 @app.route("/meals/<int:mid>/copy", methods=["POST"])
