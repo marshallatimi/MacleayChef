@@ -4439,6 +4439,59 @@ loadShopSettings();
 updateSavedCount();
 updateShoppingCount();
 
+// ── External-change watcher ────────────────────────────────────
+// Linked cookbooks can live on cloud-synced drives (OneDrive, Google Drive…).
+// If the file changes on disk while the app is open — e.g. a sync finishing
+// after edits were made on another computer — reload our caches instead of
+// showing (or writing back) stale data. Checked on window focus and every 20s.
+let _cbSeenMtime = null;
+let _cbRefreshing = false;
+
+async function _checkCookbookChanged() {
+  if (_cbRefreshing) return;
+  try {
+    const d = await (await fetch("/cookbooks/mtime")).json();
+    if (d.mtime == null) return;
+    if (_cbSeenMtime == null) { _cbSeenMtime = d.mtime; return; }
+    if (d.mtime === _cbSeenMtime) return;
+    _cbSeenMtime = d.mtime;
+    // Don't yank state out from under the user mid-edit
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
+    _cbRefreshing = true;
+    try {
+      savedRecipes    = await (await fetch("/recipes")).json();
+      savedMeals      = await (await fetch("/meals")).json();
+      savedGroupMeals = await (await fetch("/group-meals")).json();
+      updateSavedCount(); updateMealsCount(); updateShoppingCount();
+      // Re-render whichever view is on screen
+      if (!document.getElementById("tab-saved").hidden &&
+          !document.getElementById("saved-list-view").hidden) renderGrid();
+      if (!document.getElementById("tab-meals").hidden) {
+        if (!document.getElementById("meals-list-view").hidden) renderMealGrid();
+        else if (selectedMeal) {
+          const fresh = savedMeals.find(m => m.id === selectedMeal.id);
+          if (fresh) { selectedMeal = fresh; renderMealDetail(); }
+          else backToMealsList();
+        }
+      }
+      if (!document.getElementById("tab-groupmeal").hidden) {
+        if (!document.getElementById("groupmeal-list-view").hidden) renderGroupMealList();
+        else if (selectedGroupMeal) {
+          const fresh = savedGroupMeals.find(g => g.id === selectedGroupMeal.id);
+          if (fresh) { selectedGroupMeal = fresh; renderGroupMealDetail(); }
+          else backToGroupMealList();
+        }
+      }
+    } finally {
+      _cbRefreshing = false;
+    }
+  } catch {}
+}
+
+window.addEventListener("focus", _checkCookbookChanged);
+setInterval(_checkCookbookChanged, 20000);
+
 // ── Modal scroll-lock: whenever any backdrop becomes visible/hidden,
 //    lock or unlock body scrolling automatically ──────────────────
 (function setupModalScrollLock() {
