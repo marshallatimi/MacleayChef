@@ -475,6 +475,28 @@ def init_db():
                     pass
             if text:
                 conn.execute("UPDATE recipes SET directions_text=? WHERE id=?", (text, rid))
+
+        # Migration: embed legacy file-based images as data URIs so they travel
+        # with the cookbook. Older versions stored /static/uploads/<file> URLs,
+        # which only resolve on the computer that uploaded them. Runs on the
+        # machine that still has the file; others leave the value untouched.
+        for table in ("recipes", "meals", "group_meals"):
+            try:
+                img_rows = conn.execute(
+                    f"SELECT id, image FROM {table} WHERE image LIKE '/static/uploads/%'"
+                ).fetchall()
+            except Exception:
+                continue
+            for row_id, image_val in img_rows:
+                fname = image_val.split("?")[0].rsplit("/", 1)[-1]
+                fpath = os.path.join(UPLOADS_DIR, fname)
+                if not os.path.exists(fpath):
+                    continue
+                try:
+                    data_uri = _path_to_data_uri(fpath)
+                    conn.execute(f"UPDATE {table} SET image=? WHERE id=?", (data_uri, row_id))
+                except Exception:
+                    pass
         conn.commit()
 
 
@@ -1415,14 +1437,8 @@ def serve_upload(filename):
     return send_from_directory(UPLOADS_DIR, filename)
 
 
-def _image_file_to_data_uri(file_storage, max_side=1200, quality=82):
-    """Resize, compress, and return a base64 data URI for an uploaded image.
-
-    Storing the image as a data URI inside the SQLite cookbook file means the
-    image travels with the .cookbook file — essential for linked cookbooks
-    shared across multiple computers via a network or cloud drive.
-    """
-    img = PilImage.open(file_storage.stream)
+def _pil_to_data_uri(img, max_side=1200, quality=82):
+    """Resize, compress, and encode a PIL image as a JPEG data URI."""
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     w, h = img.size
@@ -1433,6 +1449,23 @@ def _image_file_to_data_uri(file_storage, max_side=1200, quality=82):
     img.save(buf, "JPEG", quality=quality, optimize=True)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/jpeg;base64,{b64}"
+
+
+def _image_file_to_data_uri(file_storage, max_side=1200, quality=82):
+    """Resize, compress, and return a base64 data URI for an uploaded image.
+
+    Storing the image as a data URI inside the SQLite cookbook file means the
+    image travels with the .cookbook file — essential for linked cookbooks
+    shared across multiple computers via a network or cloud drive.
+    """
+    return _pil_to_data_uri(PilImage.open(file_storage.stream), max_side, quality)
+
+
+def _path_to_data_uri(path, max_side=1200, quality=82):
+    """Same as _image_file_to_data_uri but reads from a filesystem path.
+    Used by the init_db migration that embeds legacy upload files."""
+    with PilImage.open(path) as img:
+        return _pil_to_data_uri(img, max_side, quality)
 
 
 @app.route("/recipes/<int:rid>/image", methods=["POST"])
