@@ -1732,14 +1732,36 @@ async function removeGroupMealPhoto() {
 // When opened from a group meal, _rpGmCtx = {slot, kind:'slot'|'inner', useSlot}
 // and the popup shows an editable servings override for that recipe.
 let _rpGmCtx = null;
+let _rpRecipe = null; // last-rendered recipe so the popup can re-render on servings change
+
+function _rpGmSlot() {
+  const g = selectedGroupMeal;
+  if (!_rpGmCtx || !g) return null;
+  return _rpGmCtx.useSlot === false
+    ? (g.meals||[]).find(m => m.id === _rpGmCtx.slot)
+    : (g.meals||[]).find(m => m.slot_id === _rpGmCtx.slot);
+}
+
+// Effective servings for this recipe in the group meal:
+// explicit override → meal slot servings → group default → null
+function _rpEffServings(r) {
+  const g = selectedGroupMeal;
+  const slot = _rpGmSlot();
+  if (!slot || !g) return null;
+  if (_rpGmCtx.kind === "slot") {
+    if (slot.servings != null) return slot.servings;
+  } else {
+    const rs = slot.recipe_servings || {};
+    if (rs[r.id] != null) return rs[r.id];
+    if (slot.servings != null) return slot.servings;
+  }
+  return g.default_servings != null ? g.default_servings : null;
+}
 
 function _rpGmServingsRow(r) {
   const g = selectedGroupMeal;
-  if (!_rpGmCtx || !g) return "";
-  const slot = _rpGmCtx.useSlot === false
-    ? (g.meals||[]).find(m => m.id === _rpGmCtx.slot)
-    : (g.meals||[]).find(m => m.slot_id === _rpGmCtx.slot);
-  if (!slot) return "";
+  const slot = _rpGmSlot();
+  if (!slot || !g) return "";
   let val, ph;
   if (_rpGmCtx.kind === "slot") {
     val = slot.servings != null ? slot.servings : "";
@@ -1769,23 +1791,45 @@ async function _rpServingsChanged(rid, val) {
   }
   // Refresh the group meal view behind the modal so its inputs match
   renderGroupMealDetail();
+  // Re-render the popup so ingredient amounts re-scale to the new servings
+  if (_rpRecipe && _rpRecipe.id === rid) {
+    document.getElementById("rp-modal-content").innerHTML = _buildRecipePreviewHTML(_rpRecipe);
+  }
 }
 
 function _buildRecipePreviewHTML(r) {
+  _rpRecipe = r;
   const cats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
   const metaBits = [
     fmtServings(r.servings) ? `🍽️ ${esc(fmtServings(r.servings))}` : "",
     r.total_time ? `⏱ ${esc(r.total_time)}` : "",
     cats.length ? `🏷️ ${esc(cats.join(", "))}` : "",
   ].filter(Boolean);
+  // In a group meal context, scale ingredient amounts to the effective servings
+  // (override typed in the popup, else meal servings, else the group default)
+  const baseServ = r.servings_num || parseServingsNumJS(r.servings) || null;
+  const effServ  = _rpGmCtx ? _rpEffServings(r) : null;
+  let factor = 1, isScaled = false, isSkipped = false;
+  if (effServ === 0) {
+    isSkipped = true;
+  } else if (baseServ && effServ != null && effServ > 0) {
+    factor = effServ / baseServ;
+    isScaled = Math.abs(factor - 1) > 0.01;
+  }
   const igs = (r.ingredient_groups && r.ingredient_groups.length)
     ? r.ingredient_groups
     : [{purpose: null, ingredients: r.ingredients || []}];
   const ingHtml = igs.map(g => {
-    const items = (g.ingredients || []).map(ing => `<li>${esc(dispIng(ing))}</li>`).join("");
+    const items = (g.ingredients || []).map(ing =>
+      `<li>${esc(isScaled ? scaleIngredient(ing, factor) : dispIng(ing))}</li>`).join("");
     if (!items) return "";
     return `${g.purpose ? `<div style="font-weight:700;font-size:0.85rem;margin:0.4rem 0 0.2rem">${esc(g.purpose)}</div>` : ""}<ul class="rp-ings">${items}</ul>`;
   }).join("");
+  const ingHeading = isSkipped
+    ? `Ingredients <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)">(set to 0 — skipped from print &amp; shopping)</span>`
+    : isScaled
+      ? `Ingredients <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)">(scaled to ${formatNum(effServ)} servings)</span>`
+      : "Ingredients";
   let stepsHtml = "";
   if (r.directions_text && r.directions_text.trim()) {
     stepsHtml = `<div class="rp-steps">${esc(r.directions_text.trim())}</div>`;
@@ -1802,7 +1846,7 @@ function _buildRecipePreviewHTML(r) {
       <div class="rp-title">${esc(r.title || "Untitled Recipe")}</div>
       ${metaBits.length ? `<div class="rp-meta">${metaBits.map(b => `<span>${b}</span>`).join("")}</div>` : ""}
       ${_rpGmServingsRow(r)}
-      ${ingHtml ? `<div class="rp-section">Ingredients</div>${ingHtml}` : ""}
+      ${ingHtml ? `<div class="rp-section">${ingHeading}</div>${ingHtml}` : ""}
       ${stepsHtml ? `<div class="rp-section">Directions</div>${stepsHtml}` : ""}
       <button class="btn btn-ghost rp-open-btn" style="font-size:0.85rem" onclick="openFullRecipeFromPreview(${r.id})">Open Full Recipe →</button>
     </div>`;
@@ -1834,6 +1878,7 @@ async function openRecipePreview(rid, gmCtx) {
 function closeRecipePreview(event) {
   if (event && event.target !== event.currentTarget) return;
   _rpGmCtx = null;
+  _rpRecipe = null;
   document.getElementById("rp-modal-backdrop").hidden = true;
 }
 
