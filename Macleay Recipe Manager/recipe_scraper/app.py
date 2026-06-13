@@ -371,18 +371,22 @@ def init_db():
                 pass
 
             if not has_row_id:
-                # Old composite-PK schema: rename → create new → copy → drop old
+                # Old composite-PK schema: rename → create new → copy → drop old.
+                # The old table is only dropped after verifying every row copied,
+                # so a failed copy can never lose group-meal membership data.
                 conn.execute("ALTER TABLE group_meal_members RENAME TO group_meal_members_old")
                 conn.execute("""
                     CREATE TABLE group_meal_members (
                         row_id          INTEGER PRIMARY KEY AUTOINCREMENT,
                         group_id        INTEGER NOT NULL,
-                        meal_id         INTEGER NOT NULL,
+                        meal_id         INTEGER DEFAULT NULL,
+                        recipe_id       INTEGER DEFAULT NULL,
                         servings        REAL    DEFAULT NULL,
                         sort_order      INTEGER DEFAULT 0,
                         recipe_servings TEXT    DEFAULT NULL
                     )
                 """)
+                copied = False
                 try:
                     conn.execute("""
                         INSERT INTO group_meal_members
@@ -390,15 +394,27 @@ def init_db():
                         SELECT  group_id, meal_id, servings, sort_order, recipe_servings
                         FROM    group_meal_members_old
                     """)
+                    copied = True
                 except Exception:
                     try:
                         conn.execute("""
                             INSERT INTO group_meal_members (group_id, meal_id)
                             SELECT group_id, meal_id FROM group_meal_members_old
                         """)
+                        copied = True
+                    except Exception:
+                        copied = False
+                drop_old = False
+                if copied:
+                    try:
+                        old_n = conn.execute("SELECT COUNT(*) FROM group_meal_members_old").fetchone()[0]
+                        new_n = conn.execute("SELECT COUNT(*) FROM group_meal_members").fetchone()[0]
+                        drop_old = new_n >= old_n
                     except Exception:
                         pass
-                conn.execute("DROP TABLE group_meal_members_old")
+                if drop_old:
+                    conn.execute("DROP TABLE group_meal_members_old")
+                # else: keep group_meal_members_old as a recovery copy
             else:
                 # Already migrated – just add any missing optional columns
                 for col in ["servings REAL DEFAULT NULL", "recipe_servings TEXT DEFAULT NULL",
@@ -1930,6 +1946,18 @@ def reorder_group_meal_slots(gid):
         )
     db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/cookbooks/mtime")
+def cookbook_mtime():
+    """Modification time of the active cookbook file. Used by the frontend to
+    detect external changes (e.g. cloud sync updating a linked cookbook) and
+    reload its caches instead of showing stale data."""
+    try:
+        st = os.stat(active_db_path())
+        return jsonify({"mtime": st.st_mtime, "size": st.st_size})
+    except OSError:
+        return jsonify({"mtime": None, "size": None})
 
 
 @app.route("/file/current")
