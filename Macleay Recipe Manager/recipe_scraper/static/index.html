@@ -388,6 +388,20 @@
     .img-modal input[type=file] { width:100%; margin-bottom:0.8rem; font-size:0.88rem; }
     .img-modal-btns { display:flex; gap:0.5rem; justify-content:flex-end; margin-top:0.5rem; }
 
+    /* Recipe preview modal (read-only popup from meals / group meals) */
+    .rp-modal { background:var(--card); border-radius:12px; width:min(560px,92vw); max-height:86vh; overflow-y:auto; box-shadow:0 8px 40px rgba(0,0,0,0.3); color:var(--text); position:relative; }
+    [data-theme="dark"] .rp-modal { background:#2c2c2e; }
+    .rp-close { position:sticky; top:0.6rem; float:right; margin:0.6rem 0.6rem 0 0; background:rgba(0,0,0,0.45); color:#fff; border:none; border-radius:50%; width:30px; height:30px; font-size:1rem; cursor:pointer; z-index:5; display:flex; align-items:center; justify-content:center; line-height:1; }
+    .rp-close:hover { background:rgba(0,0,0,0.65); }
+    .rp-img { width:100%; height:200px; object-fit:cover; display:block; border-radius:12px 12px 0 0; }
+    .rp-body { padding:1.1rem 1.4rem 1.4rem; }
+    .rp-title { font-size:1.25rem; font-weight:800; margin-bottom:0.3rem; }
+    .rp-meta { font-size:0.85rem; color:var(--muted); margin-bottom:0.8rem; display:flex; flex-wrap:wrap; gap:0.4rem 0.9rem; }
+    .rp-section { font-size:0.78rem; font-weight:800; text-transform:uppercase; letter-spacing:0.7px; color:var(--red); margin:0.9rem 0 0.35rem; }
+    .rp-ings { margin:0; padding-left:1.2rem; font-size:0.9rem; line-height:1.55; }
+    .rp-steps { font-size:0.9rem; line-height:1.55; white-space:pre-wrap; }
+    .rp-open-btn { margin-top:1rem; }
+
     .back-btn { display:flex; align-items:center; gap:0.4rem; background:none; border:none; color:var(--red); font-weight:700; font-size:0.9rem; cursor:pointer; margin-bottom:1rem; padding:0; }
     .back-btn:hover { text-decoration:underline; }
 
@@ -873,6 +887,14 @@
       <button class="btn btn-ghost" onclick="closeImageModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveImage()">Save Photo</button>
     </div>
+  </div>
+</div>
+
+<!-- Recipe Preview Modal (read-only popup from meals / group meals) -->
+<div id="rp-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeRecipePreview(event)">
+  <div class="rp-modal" onclick="event.stopPropagation()">
+    <button class="rp-close" onclick="closeRecipePreview()" title="Close">✕</button>
+    <div id="rp-modal-content"></div>
   </div>
 </div>
 
@@ -1704,6 +1726,77 @@ async function removeGroupMealPhoto() {
   if (idx !== -1 && savedGroupMeals) savedGroupMeals[idx].image = null;
   renderGroupMealDetail();
   showToast("Photo removed");
+}
+
+// ── Recipe preview popup (read-only, from meals / group meals) ──────────────
+function _buildRecipePreviewHTML(r) {
+  const cats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
+  const metaBits = [
+    fmtServings(r.servings) ? `🍽️ ${esc(fmtServings(r.servings))}` : "",
+    r.total_time ? `⏱ ${esc(r.total_time)}` : "",
+    cats.length ? `🏷️ ${esc(cats.join(", "))}` : "",
+  ].filter(Boolean);
+  const igs = (r.ingredient_groups && r.ingredient_groups.length)
+    ? r.ingredient_groups
+    : [{purpose: null, ingredients: r.ingredients || []}];
+  const ingHtml = igs.map(g => {
+    const items = (g.ingredients || []).map(ing => `<li>${esc(dispIng(ing))}</li>`).join("");
+    if (!items) return "";
+    return `${g.purpose ? `<div style="font-weight:700;font-size:0.85rem;margin:0.4rem 0 0.2rem">${esc(g.purpose)}</div>` : ""}<ul class="rp-ings">${items}</ul>`;
+  }).join("");
+  let stepsHtml = "";
+  if (r.directions_text && r.directions_text.trim()) {
+    stepsHtml = `<div class="rp-steps">${esc(r.directions_text.trim())}</div>`;
+  } else {
+    const sgs = r.instruction_groups || [];
+    const steps = sgs.flatMap(g => g.steps || []);
+    if (steps.length) {
+      stepsHtml = `<ol class="rp-ings">${steps.map(s => `<li>${esc(s)}</li>`).join("")}</ol>`;
+    }
+  }
+  return `
+    ${r.image ? `<img class="rp-img" src="${esc(r.image)}" alt="${esc(r.title)}"/>` : ""}
+    <div class="rp-body">
+      <div class="rp-title">${esc(r.title || "Untitled Recipe")}</div>
+      ${metaBits.length ? `<div class="rp-meta">${metaBits.map(b => `<span>${b}</span>`).join("")}</div>` : ""}
+      ${ingHtml ? `<div class="rp-section">Ingredients</div>${ingHtml}` : ""}
+      ${stepsHtml ? `<div class="rp-section">Directions</div>${stepsHtml}` : ""}
+      <button class="btn btn-ghost rp-open-btn" style="font-size:0.85rem" onclick="openFullRecipeFromPreview(${r.id})">Open Full Recipe →</button>
+    </div>`;
+}
+
+async function openRecipePreview(rid) {
+  const backdrop = document.getElementById("rp-modal-backdrop");
+  const content  = document.getElementById("rp-modal-content");
+  let r = savedRecipes.find(x => x.id === rid);
+  content.innerHTML = r
+    ? _buildRecipePreviewHTML(r)
+    : `<div class="rp-body" style="color:var(--muted)">Loading…</div>`;
+  backdrop.hidden = false;
+  // Fetch the full record (the list endpoint omits images) and re-render
+  try {
+    const res = await fetch(`/recipes/${rid}`);
+    if (res.ok) {
+      const full = await res.json();
+      if (!backdrop.hidden) content.innerHTML = _buildRecipePreviewHTML(full);
+    } else if (!r) {
+      content.innerHTML = `<div class="rp-body" style="color:var(--red)">Recipe not found.</div>`;
+    }
+  } catch {
+    if (!r) content.innerHTML = `<div class="rp-body" style="color:var(--red)">Could not load recipe.</div>`;
+  }
+}
+
+function closeRecipePreview(event) {
+  if (event && event.target !== event.currentTarget) return;
+  document.getElementById("rp-modal-backdrop").hidden = true;
+}
+
+function openFullRecipeFromPreview(rid) {
+  closeRecipePreview();
+  if (!savedRecipes.find(x => x.id === rid)) return;
+  showTab("saved");
+  openRecipe(rid);
 }
 
 function openImageModal(ctx) {
@@ -4502,9 +4595,10 @@ function renderMealDetail() {
           style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid var(--border)">
           <span class="gm-drag-handle" style="padding:0 0.15rem;flex-shrink:0" onclick="event.stopPropagation()">⠿</span>
           ${r.image
-            ? `<img src="${esc(r.image)}" class="meal-recipe-thumb" style="flex-shrink:0"/>`
-            : `<div class="meal-recipe-thumb meal-recipe-thumb-placeholder" style="flex-shrink:0">🍽️</div>`}
-          <div class="meal-recipe-info" style="flex:1;min-width:0">
+            ? `<img src="${esc(r.image)}" class="meal-recipe-thumb" style="flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openRecipePreview(${r.id})"/>`
+            : `<div class="meal-recipe-thumb meal-recipe-thumb-placeholder" style="flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openRecipePreview(${r.id})">🍽️</div>`}
+          <div class="meal-recipe-info" style="flex:1;min-width:0;cursor:pointer" title="Click to preview recipe"
+            onclick="event.stopPropagation();openRecipePreview(${r.id})">
             <div class="meal-recipe-title">${esc(r.title)}</div>
             <div class="meal-recipe-meta">${esc(fmtServings(r.servings))}</div>
           </div>
@@ -5699,7 +5793,8 @@ function _gmSlotDragStart(event, slotId, slotType) {
   event.dataTransfer.effectAllowed = "move";
 }
 function _gmSlotDragOver(event, slotId, slotType) {
-  if (_gmDragSlotId == null || _gmDragSlotId === slotId || _gmDragSlotType !== slotType) return;
+  // Mixed ordering: meals and recipes can be dropped anywhere relative to each other
+  if (_gmDragSlotId == null || _gmDragSlotId === slotId) return;
   event.preventDefault();
   event.currentTarget.classList.add("gm-drag-over");
 }
@@ -5714,7 +5809,7 @@ function _gmSlotDragEnd(event) {
 async function _gmSlotDrop(event, targetSlotId, slotType) {
   event.preventDefault();
   event.currentTarget.classList.remove("gm-drag-over");
-  if (_gmDragSlotId == null || _gmDragSlotId === targetSlotId || _gmDragSlotType !== slotType) return;
+  if (_gmDragSlotId == null || _gmDragSlotId === targetSlotId) return;
   const g = selectedGroupMeal;
   if (!g) return;
   const meals   = g.meals;
@@ -5779,8 +5874,9 @@ function renderGroupMealDetail() {
   const content = document.getElementById("groupmeal-detail-content");
   const available = savedMeals;
 
-  // Sort: meal slots first, individual recipe slots at the bottom
-  g.meals = [...(g.meals||[])].sort((a, b) => (a.type==="recipe"?1:0) - (b.type==="recipe"?1:0));
+  // Slots render in user-defined order (sort_order from the server); meals and
+  // recipes can be freely intermixed via drag-and-drop.
+  g.meals = [...(g.meals||[])];
 
   const mealRows = (!g.meals || !g.meals.length)
     ? `<p style="color:var(--muted);font-size:0.9rem;padding:0.5rem 0">No meals or recipes yet. Add some below.</p>`
@@ -5801,7 +5897,8 @@ function renderGroupMealDetail() {
             <div class="gm-meal-header" style="cursor:grab">
               <span class="gm-drag-handle">⠿</span>
               <span style="font-size:0.68rem;font-weight:700;background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px;flex-shrink:0">Recipe</span>
-              <span class="gm-meal-name">${esc(m.name)}</span>
+              <span class="gm-meal-name" style="cursor:pointer" title="Click to preview recipe"
+                onclick="event.stopPropagation();openRecipePreview(${m.id})">${esc(m.name)}</span>
               <input type="number" class="gm-srv-input" min="0" step="0.5"
                 style="margin-left:auto"
                 placeholder="${srvPh}" value="${srv}"
@@ -5831,7 +5928,8 @@ function renderGroupMealDetail() {
                      : (effBase != null ? `Meal default (${effBase})` : "Servings…");
           const rval = rs[r.id] != null ? rs[r.id] : "";
           return `<div class="gm-recipe-row">
-            <span class="gm-recipe-name">${esc(r.title)}</span>
+            <span class="gm-recipe-name" style="cursor:pointer" title="Click to preview recipe"
+              onclick="event.stopPropagation();openRecipePreview(${r.id})">${esc(r.title)}</span>
             <span class="gm-srv-label">Servings:</span>
             <input type="number" class="gm-srv-input" min="0" step="0.5"
               placeholder="${rph}" value="${rval}"

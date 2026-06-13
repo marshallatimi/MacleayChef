@@ -1623,12 +1623,28 @@ def create_meal():
 def update_meal(mid):
     data = request.get_json()
     db = get_db()
-    cats, category = _categories_payload(data)
-    ds = data.get("default_servings")
-    db.execute("UPDATE meals SET name=?, category=?, categories=?, default_servings=?, notes=? WHERE id=?",
-               (data.get("name"), category, json.dumps(cats) if cats else None, ds,
-                data.get("notes") or None, mid))
-    db.commit()
+    # Partial update: only touch columns whose keys are present in the payload,
+    # so a rename ({name} only) can't wipe categories/notes/servings.
+    sets, vals = [], []
+    if "name" in data:
+        sets.append("name=?")
+        vals.append(data.get("name"))
+    if "categories" in data or "category" in data:
+        cats, category = _categories_payload(data)
+        sets.append("category=?")
+        vals.append(category)
+        sets.append("categories=?")
+        vals.append(json.dumps(cats) if cats else None)
+    if "default_servings" in data:
+        sets.append("default_servings=?")
+        vals.append(data.get("default_servings"))
+    if "notes" in data:
+        sets.append("notes=?")
+        vals.append(data.get("notes") or None)
+    if sets:
+        vals.append(mid)
+        db.execute(f"UPDATE meals SET {', '.join(sets)} WHERE id=?", vals)
+        db.commit()
     return jsonify({"ok": True})
 
 
@@ -1842,8 +1858,13 @@ def add_meal_to_group(gid):
     data = request.get_json()
     mid = data.get("meal_id")
     db = get_db()
+    row = db.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM group_meal_members WHERE group_id=?", (gid,)
+    ).fetchone()
+    next_order = (row[0] if row else -1) + 1
     cur = db.execute(
-        "INSERT INTO group_meal_members (group_id, meal_id) VALUES (?,?)", (gid, mid)
+        "INSERT INTO group_meal_members (group_id, meal_id, sort_order) VALUES (?,?,?)",
+        (gid, mid, next_order)
     )
     db.commit()
     return jsonify({"ok": True, "slot_id": cur.lastrowid})
@@ -1856,10 +1877,15 @@ def add_recipe_to_group(gid):
     if not rid:
         return jsonify({"error": "recipe_id required"}), 400
     db  = get_db()
+    row = db.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM group_meal_members WHERE group_id=?", (gid,)
+    ).fetchone()
+    next_order = (row[0] if row else -1) + 1
     # Use meal_id=0 as sentinel so NOT NULL constraint on older DBs is satisfied.
     # meal_id=0 never matches a real meal in the LEFT JOIN.
     cur = db.execute(
-        "INSERT INTO group_meal_members (group_id, meal_id, recipe_id) VALUES (?,?,?)", (gid, 0, rid)
+        "INSERT INTO group_meal_members (group_id, meal_id, recipe_id, sort_order) VALUES (?,?,?,?)",
+        (gid, 0, rid, next_order)
     )
     db.commit()
     return jsonify({"ok": True, "slot_id": cur.lastrowid})
