@@ -1800,11 +1800,6 @@ async function _rpServingsChanged(rid, val) {
 function _buildRecipePreviewHTML(r) {
   _rpRecipe = r;
   const cats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
-  const metaBits = [
-    fmtServings(r.servings) ? `🍽️ ${esc(fmtServings(r.servings))}` : "",
-    r.total_time ? `⏱ ${esc(r.total_time)}` : "",
-    cats.length ? `🏷️ ${esc(cats.join(", "))}` : "",
-  ].filter(Boolean);
   // In a group meal context, scale ingredient amounts to the effective servings
   // (override typed in the popup, else meal servings, else the group default)
   const baseServ = r.servings_num || parseServingsNumJS(r.servings) || null;
@@ -1816,6 +1811,16 @@ function _buildRecipePreviewHTML(r) {
     factor = effServ / baseServ;
     isScaled = Math.abs(factor - 1) > 0.01;
   }
+  // Servings tag reflects the effective amount in this group meal (does NOT
+  // change the recipe's stored default serving size)
+  const servingsLabel = (isScaled || isSkipped) && effServ != null
+    ? `${formatNum(effServ)} servings`
+    : fmtServings(r.servings);
+  const metaBits = [
+    servingsLabel ? `🍽️ ${esc(servingsLabel)}` : "",
+    r.total_time ? `⏱ ${esc(r.total_time)}` : "",
+    cats.length ? `🏷️ ${esc(cats.join(", "))}` : "",
+  ].filter(Boolean);
   const igs = (r.ingredient_groups && r.ingredient_groups.length)
     ? r.ingredient_groups
     : [{purpose: null, ingredients: r.ingredients || []}];
