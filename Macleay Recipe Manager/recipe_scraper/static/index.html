@@ -6119,8 +6119,10 @@ function renderGroupMealDetail() {
     <div style="margin-top:0.9rem;display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start">
       ${available.length ? `<div style="flex:1;min-width:220px">
         <div class="section-title" style="margin-bottom:0.5rem">Add Meal</div>
-        <input type="text" id="gm-cat-filter" placeholder="Filter by category…" oninput="renderGroupMealBrowser()"
-          style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem;width:140px;margin-bottom:0.4rem"/>
+        <select id="gm-cat-filter" onchange="renderGroupMealBrowser()"
+          style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem;width:160px;margin-bottom:0.4rem">
+          ${_gmMealCategoryOptions()}
+        </select>
         <div class="shop-search-bar" style="margin-bottom:0.5rem">
           <input type="text" id="gm-meal-search" placeholder="Search meals…" oninput="renderGroupMealBrowser()"/>
         </div>
@@ -6177,16 +6179,30 @@ function renderGroupMealDetail() {
   if (savedRecipes.length) renderGroupMealRecipeBrowser();
 }
 
+// Build <option> list of every category used by saved meals, for the
+// Add-Meal category dropdown in the group meal editor.
+function _gmMealCategoryOptions() {
+  const cats = [...new Set(
+    (savedMeals || []).flatMap(m => m.categories || (m.category ? [m.category] : []))
+  )].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const cur = _gmMealCatFilter || "";
+  return `<option value="">All categories</option>` +
+    cats.map(c => `<option value="${esc(c)}"${c === cur ? " selected" : ""}>${esc(c)}</option>`).join("");
+}
+
+let _gmMealCatFilter = "";
+
 function renderGroupMealBrowser() {
   const browser = document.getElementById("gm-meal-browser");
   if (!browser || !selectedGroupMeal) return;
   const q = (document.getElementById("gm-meal-search")?.value || "").toLowerCase();
-  const catFilter = (document.getElementById("gm-cat-filter")?.value || "").toLowerCase();
+  const catFilter = document.getElementById("gm-cat-filter")?.value || "";
+  _gmMealCatFilter = catFilter; // remember selection across re-renders
   const matches = savedMeals.filter(m => {
     if (q && !m.name.toLowerCase().includes(q)) return false;
     if (catFilter) {
       const mCats = m.categories || (m.category ? [m.category] : []);
-      return mCats.some(c => c.toLowerCase().includes(catFilter));
+      return mCats.includes(catFilter);
     }
     return true;
   });
