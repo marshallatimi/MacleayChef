@@ -341,6 +341,15 @@
     .gm-meal-block.gm-drag-over { border-color:var(--red); box-shadow:0 0 0 2px rgba(180,60,60,0.18); }
     .gm-meal-block.gm-dragging { opacity:0.45; }
     .gm-meal-header { display:flex; align-items:center; gap:0.6rem; padding:0.55rem 0.8rem; background:var(--bg); cursor:grab; user-select:none; }
+    /* Section header slots inside a group meal */
+    .gm-section-block { border:none; border-radius:0; margin:1rem 0 0.45rem; overflow:visible; background:none; }
+    .gm-section-header { display:flex; align-items:center; gap:0.6rem; padding:0.25rem 0.2rem; border-bottom:2px solid var(--red); user-select:none; }
+    .gm-section-title { font-size:0.85rem; font-weight:800; text-transform:uppercase; letter-spacing:0.7px; color:var(--red); cursor:pointer; }
+    /* Group-meal Add Meal / Add Recipe browsers: single-column, full titles + tags */
+    #gm-meal-browser, #gm-recipe-browser { display:flex; flex-direction:column; gap:0.45rem; }
+    #gm-meal-browser .shop-recipe-row, #gm-recipe-browser .shop-recipe-row { padding:0.55rem 0.65rem; }
+    #gm-meal-browser .shop-recipe-title, #gm-recipe-browser .shop-recipe-title { white-space:normal; overflow:visible; text-overflow:unset; font-size:0.92rem; line-height:1.3; }
+    .gm-browser-tags { display:flex; flex-wrap:wrap; gap:0.2rem; margin-top:0.2rem; }
     .gm-meal-header:hover { background:var(--border); }
     .gm-drag-handle { color:var(--muted); font-size:0.85rem; flex-shrink:0; cursor:grab; letter-spacing:-1px; }
     .gm-recipe-row.gm-drag-over { background:rgba(180,60,60,0.1) !important; }
@@ -834,7 +843,7 @@
     <div style="margin-bottom:0.9rem">
       <label style="font-size:0.8rem;font-weight:700;color:var(--muted);display:block;margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px">Choose a file</label>
       <label style="display:flex;align-items:center;gap:0.6rem;cursor:pointer">
-        <input type="file" id="ir-file-input" accept=".txt,.cookbook,.csv,.pdf" style="display:none" onchange="handleIRFileSelect(this)">
+        <input type="file" id="ir-file-input" accept=".txt,.mmf,.cookbook,.csv,.pdf" style="display:none" onchange="handleIRFileSelect(this)">
         <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.45rem 1rem" onclick="document.getElementById('ir-file-input').click();event.preventDefault()">Browse…</button>
         <span id="ir-file-name" style="font-size:0.85rem;color:var(--muted)">No file chosen</span>
       </label>
@@ -1483,10 +1492,18 @@ async function patchRecipe() {
     if (_recipeHistory.length > 50) _recipeHistory.shift();
   }
   _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
-  await fetch(`/recipes/${selectedRecipe.id}`, {
+  const _putRes = await fetch(`/recipes/${selectedRecipe.id}`, {
     method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(selectedRecipe)
   });
-  const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
+  // Keep updated_at in sync with the server so freshness comparisons never
+  // mistake our own save for someone else's edit
+  try {
+    const saved = await _putRes.json();
+    if (saved && saved.updated_at && selectedRecipe && saved.id === selectedRecipe.id) {
+      selectedRecipe.updated_at = saved.updated_at;
+    }
+  } catch {}
+  const idx = selectedRecipe ? savedRecipes.findIndex(r => r.id === selectedRecipe.id) : -1;
   if (idx !== -1) savedRecipes[idx] = {...selectedRecipe};
   updateCatFilter();
   showToast();
@@ -1803,7 +1820,11 @@ function _buildRecipePreviewHTML(r) {
   // In a group meal context, scale ingredient amounts to the effective servings
   // (override typed in the popup, else meal servings, else the group default)
   const baseServ = r.servings_num || parseServingsNumJS(r.servings) || null;
-  const effServ  = _rpGmCtx ? _rpEffServings(r) : null;
+  const effServRaw = _rpGmCtx ? _rpEffServings(r) : null;
+  // Batch-scaled recipes round up to the nearest multiple of the base servings
+  const effServ = (effServRaw != null && effServRaw > 0 && baseServ)
+    ? _applyBatchScale(parseFloat(effServRaw), baseServ, r.scale_by_batch)
+    : effServRaw;
   let factor = 1, isScaled = false, isSkipped = false;
   if (effServ === 0) {
     isSkipped = true;
@@ -2049,7 +2070,10 @@ function makeInlineInput(el, currentVal, onSave, opts={}) {
     if (!opts.textarea && e.key === "Enter") { e.preventDefault(); inp.blur(); }
     if (e.key === "Escape") {
       if (dragRow) dragRow.setAttribute("draggable", "true");
-      renderSavedDetail();
+      // Re-render whichever detail view the edit belongs to
+      if (selectedRecipe) renderSavedDetail();
+      else if (selectedGroupMeal) renderGroupMealDetail();
+      else if (selectedMeal) renderMealDetail();
     }
   });
 }
@@ -2227,13 +2251,18 @@ function initScaler(ctx, recipe) {
   input.addEventListener("input", () => {
     const newVal = parseFloat(input.value);
     if (!newVal || newVal <= 0) return;
+    const hasBase = !!(recipe.servings_num || parseServingsNumJS(recipe.servings));
     const origVal = recipe.servings_num || parseServingsNumJS(recipe.servings) || newVal;
     const factor = newVal / origVal;
     const isScaled = Math.abs(factor - 1) > 0.01;
     const badge = document.getElementById(`scaled-badge-${ctx}`);
     if (badge) badge.hidden = !isScaled;
     const defBtn = document.getElementById(`make-default-btn-${ctx}`);
-    if (defBtn) defBtn.hidden = !isScaled;
+    if (defBtn) {
+      // Recipes without any servings yet: typing a number offers to set it
+      defBtn.hidden = !(isScaled || !hasBase);
+      defBtn.textContent = hasBase ? "Make default" : "Set servings";
+    }
     document.querySelectorAll(`[data-ctx="${ctx}"][data-orig]`).forEach(el => {
       el.textContent = isScaled ? scaleIngredient(el.dataset.orig, factor) : dispIng(el.dataset.orig);
     });
@@ -3241,7 +3270,17 @@ async function handleIRFileSelect(input) {
   const ext = file.name.split(".").pop().toLowerCase();
   const preview = document.getElementById("ir-preview");
 
-  if (ext === "txt") {
+  if (ext === "mmf" || (ext === "txt" && /Meal-?Master/i.test((await file.text()).slice(0, 4000)))) {
+    // Meal-Master export — may contain many recipes in one file
+    const text = await file.text();
+    const titles = [...text.matchAll(/^\s*Title:\s*(.+)$/gim)].map(m => m[1].trim());
+    preview.innerHTML = `<strong>Detected:</strong> Meal-Master file<br>
+      <strong>Recipes found:</strong> ${titles.length}<br>
+      ${titles.length ? `<span style="color:var(--muted)">${esc(titles.slice(0,8).join(", "))}${titles.length > 8 ? "…" : ""}</span>` : ""}`;
+    preview.hidden = false;
+    document.getElementById("ir-status").textContent = titles.length ? "" : "No recipes found in this file.";
+    document.getElementById("ir-import-btn").hidden = titles.length === 0;
+  } else if (ext === "txt") {
     // Read locally and show first few lines as preview
     const text = await file.text();
     const lines = text.split("\n").filter(l => l.trim());
@@ -4505,6 +4544,9 @@ async function _checkCookbookChanged() {
     if (_cbSeenMtime == null) { _cbSeenMtime = d.mtime; return; }
     if (d.mtime === _cbSeenMtime) return;
     _cbSeenMtime = d.mtime;
+    // Our own writes also bump the file's mtime — only refresh for changes
+    // made OUTSIDE this app (another computer syncing a linked cookbook)
+    if (d.self) return;
     // Don't yank state out from under the user mid-edit
     const ae = document.activeElement;
     if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
@@ -5772,6 +5814,17 @@ async function initGroupMealTab() {
   renderGroupMealList();
 }
 
+// "11 meals, 9 recipes" label for group meal cards (section headers excluded)
+function _gmCountLabel(g) {
+  const slots = g.meals || [];
+  const nM = slots.filter(s => s.type === "meal").length;
+  const nR = slots.filter(s => s.type === "recipe").length;
+  const parts = [];
+  if (nM || !nR) parts.push(`${nM} meal${nM !== 1 ? "s" : ""}`);
+  if (nR) parts.push(`${nR} recipe${nR !== 1 ? "s" : ""}`);
+  return parts.join(", ");
+}
+
 function renderGroupMealList() {
   const container = document.getElementById("groupmeal-grid");
   const gmSearch = (document.getElementById("gm-list-search")?.value || "").toLowerCase().trim();
@@ -5792,12 +5845,11 @@ function renderGroupMealList() {
   if (mode === "list") {
     container.className = "list-view";
     container.innerHTML = gmFiltered.map(g => {
-      const n = g.meals ? g.meals.length : 0;
       return `<div class="list-card" onclick="openGroupMeal(${g.id})">
         ${g.image ? `<img class="list-thumb" src="${esc(g.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍴</div>`}
         <div class="list-info">
           <div class="list-title">${esc(g.name)}</div>
-          <div class="list-meta">${n} meal${n!==1?"s":""}</div>
+          <div class="list-meta">${_gmCountLabel(g)}</div>
         </div>
         <button class="list-del" onclick="(async(e)=>{e.stopPropagation();await deleteGroupMealById(${g.id})})(event)" title="Delete">✕</button>
       </div>`;
@@ -5805,7 +5857,6 @@ function renderGroupMealList() {
   } else {
     container.className = "recipe-grid";
     container.innerHTML = gmFiltered.map(g => {
-      const n = g.meals ? g.meals.length : 0;
       const gmThumbHtml = g.image
         ? `<img src="${esc(g.image)}" alt="${esc(g.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
         : `<div class="grid-card-img-placeholder">🍴</div>`;
@@ -5814,7 +5865,7 @@ function renderGroupMealList() {
         ${gmThumbHtml}
         <div class="grid-card-body">
           <div class="grid-card-title">${esc(g.name)}</div>
-          <div class="grid-card-meta">${n} meal${n!==1?"s":""}</div>
+          <div class="grid-card-meta">${_gmCountLabel(g)}</div>
         </div>
       </div>`;
     }).join("");
@@ -6016,9 +6067,23 @@ async function _mealRecipeDrop(event, recipeId) {
   renderMealDetail();
 }
 
+// Small "scales to N" hint for batch-scaled recipes (rounds up to a multiple
+// of the recipe's base servings — matches what print/shopping actually use).
+function _gmBatchNote(recipeId, eff) {
+  const r = savedRecipes.find(x => x.id === recipeId);
+  if (!r || !r.scale_by_batch || eff == null || !(parseFloat(eff) > 0)) return "";
+  const orig = r.servings_num || parseServingsNumJS(r.servings) || null;
+  if (!orig || orig <= 0) return "";
+  const target = _applyBatchScale(parseFloat(eff), orig, 1);
+  if (Math.abs(target - parseFloat(eff)) < 0.01) return "";
+  return `<span style="font-size:0.72rem;font-weight:700;color:var(--red);white-space:nowrap;flex-shrink:0"
+    title="Scales in batches of ${orig} — rounds up to the nearest multiple">⤴ scales to ${formatNum(target)}</span>`;
+}
+
 function renderGroupMealDetail() {
   const g = selectedGroupMeal;
   if (!g) return;
+  const _keepY = window.scrollY; // preserve scroll across edit re-renders
   const content = document.getElementById("groupmeal-detail-content");
   const available = savedMeals;
 
@@ -6031,11 +6096,30 @@ function renderGroupMealDetail() {
     : g.meals.map(m => {
         const sid = m.slot_id;
 
+        // ── Section header slot ─────────────────────────────────────────────
+        if (m.type === "header") {
+          return `<div class="gm-meal-block gm-section-block" draggable="true"
+            ondragstart="_gmSlotDragStart(event,${sid},'header')"
+            ondragover="_gmSlotDragOver(event,${sid},'header')"
+            ondragleave="_gmSlotDragLeave(event)"
+            ondrop="_gmSlotDrop(event,${sid},'header')"
+            ondragend="_gmSlotDragEnd(event)">
+            <div class="gm-section-header" style="cursor:grab">
+              <span class="gm-drag-handle" onclick="event.stopPropagation()">⠿</span>
+              <span class="gm-section-title" title="Click to rename section"
+                onclick="event.stopPropagation();inlineRenameGmSection(this, ${sid})">${esc(m.name)}</span>
+              <button class="del-btn" style="font-size:0.9rem;padding:0 4px;flex-shrink:0;margin-left:auto"
+                onclick="event.stopPropagation();removeMealFromGroupMeal(${sid}, true)">✕</button>
+            </div>
+          </div>`;
+        }
+
         // ── Direct recipe slot ──────────────────────────────────────────────
         if (m.type === "recipe") {
           const srv   = m.servings != null ? m.servings : "";
           const srvPh = m.servings != null ? String(m.servings)
                       : (g.default_servings != null ? `Group default (${g.default_servings})` : "Servings…");
+          const effDirect = m.servings != null ? m.servings : g.default_servings;
           return `<div class="gm-meal-block" draggable="true"
             ondragstart="_gmSlotDragStart(event,${sid},'recipe')"
             ondragover="_gmSlotDragOver(event,${sid},'recipe')"
@@ -6047,6 +6131,7 @@ function renderGroupMealDetail() {
               <span style="font-size:0.68rem;font-weight:700;background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px;flex-shrink:0">Recipe</span>
               <span class="gm-meal-name" style="cursor:pointer" title="Click to preview recipe"
                 onclick="event.stopPropagation();openRecipePreview(${m.id},{slot:${sid},kind:'slot'})">${esc(m.name)}</span>
+              ${_gmBatchNote(m.id, effDirect)}
               <input type="number" class="gm-srv-input" min="0" step="0.5"
                 style="margin-left:auto"
                 placeholder="${srvPh}" value="${srv}"
@@ -6075,9 +6160,11 @@ function renderGroupMealDetail() {
           const rph  = rs[r.id] != null ? String(rs[r.id])
                      : (effBase != null ? `Meal default (${effBase})` : "Servings…");
           const rval = rs[r.id] != null ? rs[r.id] : "";
+          const effInner = rs[r.id] != null ? rs[r.id] : effBase;
           return `<div class="gm-recipe-row">
             <span class="gm-recipe-name" style="cursor:pointer" title="Click to preview recipe"
               onclick="event.stopPropagation();openRecipePreview(${r.id},{slot:${sid != null ? sid : m.id},kind:'inner',useSlot:${sid != null}})">${esc(r.title)}</span>
+            ${_gmBatchNote(r.id, effInner)}
             <span class="gm-srv-label">Servings:</span>
             <input type="number" class="gm-srv-input" min="0" step="0.5"
               placeholder="${rph}" value="${rval}"
@@ -6167,9 +6254,11 @@ function renderGroupMealDetail() {
           onchange="updateGroupDefaultServings(this.value)"/>
         <span style="font-size:0.78rem;color:var(--muted)">Override per meal below ↓</span>
       </div>
-      <div class="section-title" style="margin-top:1rem">
+      <div class="section-title" style="margin-top:1rem;display:flex;align-items:center;gap:0.6rem">
         Meals in this Group
-        <span style="font-size:0.75rem;font-weight:400;color:var(--muted);margin-left:0.5rem">▶ click a meal to expand its recipes</span>
+        <span style="font-size:0.75rem;font-weight:400;color:var(--muted)">▶ click a meal to expand its recipes</span>
+        <button class="btn btn-ghost" style="font-size:0.78rem;padding:0.25rem 0.7rem;margin-left:auto"
+          onclick="addGmSection()" title="Add a section title — drag meals and recipes under it">+ Add Section</button>
       </div>
       <div id="gm-meal-list" class="detail-scroll-list">${mealRows}</div>
       ${addRow}
@@ -6177,6 +6266,42 @@ function renderGroupMealDetail() {
   // expand/collapse is now wired via inline onclick on .gm-meal-header
   if (available.length) renderGroupMealBrowser();
   if (savedRecipes.length) renderGroupMealRecipeBrowser();
+  // Restore scroll so edits don't jump the page back to the top
+  requestAnimationFrame(() => window.scrollTo(0, _keepY));
+}
+
+async function addGmSection() {
+  const g = selectedGroupMeal;
+  if (!g) return;
+  const title = await showPrompt("Section title:", "");
+  if (!title || !title.trim()) return;
+  const res = await fetch(`/group-meals/${g.id}/sections`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({title: title.trim()})
+  });
+  if (!res.ok) { showAlert("Could not add section."); return; }
+  const data = await res.json();
+  g.meals = g.meals || [];
+  g.meals.push({slot_id: data.slot_id, type: "header", id: null, name: title.trim()});
+  renderGroupMealDetail();
+  showToast("Section added — drag meals and recipes under it");
+}
+
+function inlineRenameGmSection(el, slotId) {
+  const g = selectedGroupMeal;
+  if (!g) return;
+  const slot = (g.meals||[]).find(m => m.slot_id === slotId);
+  if (!slot) return;
+  makeInlineInput(el, slot.name || "", async val => {
+    if (val && val !== slot.name) {
+      slot.name = val;
+      await fetch(`/group-meals/${g.id}/slots/${slotId}`, {
+        method:"PATCH", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({section_title: val})
+      });
+    }
+    renderGroupMealDetail();
+  }, {cls:"meta-input", stretch:true});
 }
 
 // Build <option> list of every category used by saved meals, for the
@@ -6207,14 +6332,20 @@ function renderGroupMealBrowser() {
     return true;
   });
   browser.innerHTML = matches.length
-    ? matches.map(m => `
+    ? matches.map(m => {
+        const mCats = m.categories || (m.category ? [m.category] : []);
+        const tags = mCats.length
+          ? `<div class="gm-browser-tags">${mCats.map(c => `<span class="grid-cat-badge">${esc(c)}</span>`).join("")}</div>` : "";
+        return `
         <div class="shop-recipe-row" onclick="addMealToGroupMeal(${m.id})">
-          <div class="shop-recipe-thumb-placeholder">🍽️</div>
+          ${m.image ? `<img class="shop-recipe-thumb" src="${esc(m.image)}" loading="lazy"/>` : `<div class="shop-recipe-thumb-placeholder">🍽️</div>`}
           <div class="shop-recipe-info">
             <div class="shop-recipe-title">${esc(m.name)}</div>
             <div class="shop-recipe-meta">${(m.recipes||[]).length} recipe${(m.recipes||[]).length!==1?"s":""}</div>
+            ${tags}
           </div>
-        </div>`).join("")
+        </div>`;
+      }).join("")
     : `<div style="padding:0.6rem;color:var(--muted);font-size:0.85rem">No matching meals.</div>`;
 }
 
@@ -6317,14 +6448,20 @@ function renderGroupMealRecipeBrowser() {
   const q = (document.getElementById("gm-recipe-search")?.value || "").toLowerCase();
   const matches = savedRecipes.filter(r => !q || (r.title||"").toLowerCase().includes(q));
   browser.innerHTML = matches.length
-    ? matches.map(r => `
+    ? matches.map(r => {
+        const rCats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
+        const tags = rCats.length
+          ? `<div class="gm-browser-tags">${rCats.map(c => `<span class="grid-cat-badge">${esc(c)}</span>`).join("")}</div>` : "";
+        return `
         <div class="shop-recipe-row" onclick="addRecipeToGroupMeal(${r.id})">
           ${r.image ? `<img class="shop-recipe-thumb" src="${esc(r.image)}" loading="lazy"/>` : `<div class="shop-recipe-thumb-placeholder">🍽️</div>`}
           <div class="shop-recipe-info">
             <div class="shop-recipe-title">${esc(r.title)}</div>
             <div class="shop-recipe-meta">${esc(fmtServings(r.servings))}</div>
+            ${tags}
           </div>
-        </div>`).join("")
+        </div>`;
+      }).join("")
     : `<div style="padding:0.6rem;color:var(--muted);font-size:0.85rem">No matching recipes.</div>`;
 }
 
@@ -6350,6 +6487,11 @@ async function addRecipeToGroupMeal(recipeId) {
 async function removeMealFromGroupMeal(slotOrMealId, useSlot) {
   const g = selectedGroupMeal;
   if (!g) return;
+  const slot = useSlot
+    ? (g.meals||[]).find(m => m.slot_id === slotOrMealId)
+    : (g.meals||[]).find(m => m.id === slotOrMealId);
+  const what = slot ? `"${slot.name}"` : "this item";
+  if (!await showConfirm(`Remove ${what} from this group meal?`, "Remove")) return;
   if (useSlot) {
     await fetch(`/group-meals/${g.id}/slots/${slotOrMealId}`, {method:"DELETE"});
     g.meals = (g.meals||[]).filter(m => m.slot_id !== slotOrMealId);
@@ -6689,43 +6831,76 @@ async function exportGroupFolderPdf() {
   const shopCatHtml = buildShoppingHtml(shopCatEntries, g.name + " — Shopping List");
   if (shopCatHtml) pdfs.push({ filename: "Shopping List by Category", html: shopCatHtml });
 
-  // One PDF per meal / direct recipe
-  (g.meals || []).forEach(gm => {
-    // ── Direct recipe slot ──────────────────────────────────────────────────
+  // Recipe pairs for one slot, with batch scaling applied (matches print/shopping)
+  const _slotRecipePairs = gm => {
+    if (gm.type === "header") return [];
     if (gm.type === "recipe") {
       const r = savedRecipes.find(r => r.id === gm.id);
-      if (!r) return;
+      if (!r) return [];
       const effectiveServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
-      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
+      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return [];
       const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-      const factor = (effectiveServings && origNum && origNum > 0) ? parseFloat(effectiveServings) / origNum : 1;
-      pdfs.push({ filename: r.title, html: buildMealRecipesHtml([r], [factor]) });
-      return;
+      let factor = 1;
+      if (effectiveServings && origNum && origNum > 0) {
+        factor = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch) / origNum;
+      }
+      return [{r, factor}];
     }
-
-    // ── Meal slot ───────────────────────────────────────────────────────────
     const full = savedMeals.find(m => m.id === gm.id);
-    if (!full || !full.recipes || !full.recipes.length) return;
+    if (!full || !full.recipes || !full.recipes.length) return [];
     const rs = gm.recipe_servings || {};
     const mealServings = gm.servings != null ? gm.servings
                        : (g.default_servings != null ? g.default_servings : null);
-    if (mealServings !== null && parseFloat(mealServings) === 0) return;
-    const pairs = full.recipes.map(mr => {
+    if (mealServings !== null && parseFloat(mealServings) === 0) return [];
+    return full.recipes.map(mr => {
       const r = savedRecipes.find(r => r.id === mr.id);
       if (!r) return null;
       const effectiveServings = rs[mr.id] != null ? rs[mr.id] : mealServings;
       if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return null;
       const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-      const factor = (effectiveServings && origNum && origNum > 0) ? effectiveServings / origNum : 1;
+      let factor = 1;
+      if (effectiveServings && origNum && origNum > 0) {
+        factor = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch) / origNum;
+      }
       return {r, factor};
     }).filter(Boolean);
-    if (pairs.length) {
+  };
+
+  const hasSections = (g.meals || []).some(s => s.type === "header");
+  if (hasSections) {
+    // One PDF per section, named after the section title. Slots that come
+    // before the first section header are grouped under the group meal's name.
+    let current = { name: g.name, pairs: [] };
+    const sections = [current];
+    (g.meals || []).forEach(gm => {
+      if (gm.type === "header") {
+        current = { name: gm.name, pairs: [] };
+        sections.push(current);
+        return;
+      }
+      current.pairs.push(..._slotRecipePairs(gm));
+    });
+    sections.forEach(sec => {
+      if (sec.pairs.length) {
+        pdfs.push({
+          filename: sec.name,
+          html: buildMealRecipesHtml(sec.pairs.map(p => p.r), sec.pairs.map(p => p.factor))
+        });
+      }
+    });
+  } else {
+    // No sections: one PDF per meal / direct recipe (original behaviour)
+    (g.meals || []).forEach(gm => {
+      const pairs = _slotRecipePairs(gm);
+      if (!pairs.length) return;
+      const fname = gm.type === "recipe" ? pairs[0].r.title
+                  : (savedMeals.find(m => m.id === gm.id) || {}).name || "Meal";
       pdfs.push({
-        filename: full.name,
+        filename: fname,
         html: buildMealRecipesHtml(pairs.map(p => p.r), pairs.map(p => p.factor))
       });
-    }
-  });
+    });
+  }
 
   if (!pdfs.length) { showAlert("No content to export."); return; }
 
@@ -6765,52 +6940,30 @@ document.addEventListener("contextmenu", e => {
 document.addEventListener("click",    () => { const m = document.getElementById("ctx-menu"); if (m) m.style.display = "none"; });
 document.addEventListener("scroll",   () => { const m = document.getElementById("ctx-menu"); if (m) m.style.display = "none"; }, true);
 document.addEventListener("keydown",  e => { if (e.key === "Escape") { const m = document.getElementById("ctx-menu"); if (m) m.style.display = "none"; }});
+
+// ── Global Enter-to-commit ─────────────────────────────────────
+// Pressing Enter in any single-line input commits the value (blur fires the
+// field's change/save handler). Also prevents any stray default behaviour —
+// previously Enter could activate unrelated buttons (e.g. a delete ✕).
+document.addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  const el = document.activeElement;
+  if (!el || el.tagName !== "INPUT") return;
+  if (["checkbox", "radio", "file", "button", "submit"].includes(el.type)) return;
+  if (el.id === "prompt-modal-input") return; // prompt modal has its own handler
+  e.preventDefault();
+  el.blur();
+});
 function _ctxCut()       { if (_ctxTarget) { _ctxTarget.focus(); document.execCommand("cut");  } }
 function _ctxCopy()      { document.execCommand("copy"); }
 function _ctxPaste()     { if (_ctxTarget) { _ctxTarget.focus(); document.execCommand("paste"); } }
 function _ctxSelectAll() { if (_ctxTarget) { _ctxTarget.focus(); _ctxTarget.select ? _ctxTarget.select() : document.execCommand("selectAll"); } }
 
-// ── Window focus reload + background polling (shared cookbook / multi-user) ───
-let _lastFocusReload = 0;
-
-async function _reloadSharedData() {
-  try {
-    const newRecipes = await (await fetch("/recipes")).json();
-    // Conflict detection: if a recipe we're viewing was changed remotely, warn once
-    if (selectedRecipe) {
-      const remote = newRecipes.find(r => r.id === selectedRecipe.id);
-      if (remote && remote.updated_at && selectedRecipe.updated_at &&
-          remote.updated_at !== selectedRecipe.updated_at &&
-          !_remoteChangeWarned) {
-        _remoteChangeWarned = true;
-        showToast("⚠️ This recipe was updated by another user — reloading…");
-        setTimeout(() => openRecipe(selectedRecipe.id), 1200);
-      }
-    }
-    savedRecipes = newRecipes;
-    savedMeals = await (await fetch("/meals")).json();
-    savedGroupMeals = await (await fetch("/group-meals")).json();
-    updateCatFilter();
-    if (document.getElementById("tab-saved") && !document.getElementById("tab-saved").hidden) renderGrid();
-    if (document.getElementById("tab-meals") && !document.getElementById("tab-meals").hidden) renderMealGrid();
-    if (document.getElementById("tab-cookbooks") && !document.getElementById("tab-cookbooks").hidden) initCookbooksTab();
-  } catch {}
-}
-let _remoteChangeWarned = false;
-
-window.addEventListener("focus", async () => {
-  const now = Date.now();
-  if (now - _lastFocusReload < 15000) return; // max once per 15s on focus
-  _lastFocusReload = now;
-  _remoteChangeWarned = false;
-  await _reloadSharedData();
-});
-
-// Background poll every 2 minutes for multi-user environments
-setInterval(async () => {
-  _remoteChangeWarned = false;
-  await _reloadSharedData();
-}, 120000);
+// NOTE: the old focus/2-minute polling reload (_reloadSharedData) was removed.
+// It compared updated_at against a stale local copy, so the app's OWN saves
+// triggered false "updated by another user" reloads that kicked the user out
+// of text fields. External-change detection now lives in _checkCookbookChanged,
+// which watches the cookbook file's mtime and ignores this app's own writes.
 
 function doPrint(fullHtml) {
   // Inject content into the current window and call window.print().
