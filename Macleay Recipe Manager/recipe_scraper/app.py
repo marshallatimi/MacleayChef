@@ -1315,6 +1315,28 @@ def import_pdf_text():
 
 _MM_HEADER_RE = re.compile(r'^(?:M{5}|-{5,})[- ]*Recipe (?:via|Extracted from) Meal-?Master', re.I | re.M)
 _MM_END_RE    = re.compile(r'^(?:M{5}|-{5,})\s*$', re.M)
+_MM_NUTRITION_RE = re.compile(
+    r'^Per Serving\s*:|\d+\s*mg\s+(?:Sodium|Cholesterol|Calcium|Iron)\b|'
+    r'\d+\s*g\s+(?:Protein|Tot(?:al)?\s+Fat|Sat Fat|Mono Fat|Carb|Fiber)\b', re.I)
+
+
+def _strip_rtf(text):
+    """Remove RTF markup that some exporters (notably AccuChef) embed inside
+    Meal-Master directions, e.g. {\\rtf1\\ansi...} wrappers, font/color
+    tables, and control words like \\par, \\cf1, \\fs20."""
+    if "\\" not in text and "{" not in text:
+        return text
+    # Drop font & color table groups entirely
+    text = re.sub(r'\{\\fonttbl.*?\}\}', ' ', text, flags=re.S)
+    text = re.sub(r'\{\\colortbl.*?\}', ' ', text, flags=re.S)
+    # Paragraph markers become newlines; then remove every control word,
+    # hex escape, and brace
+    text = re.sub(r'\\pard?\b', '\n', text)
+    text = re.sub(r"\\'[0-9a-fA-F]{2}", '', text)
+    text = re.sub(r'\\[a-zA-Z]+-?\d*\s?', ' ', text)
+    text = text.replace('{', ' ').replace('}', ' ')
+    lines = [re.sub(r'\s{2,}', ' ', l).strip() for l in text.split('\n')]
+    return "\n".join(l for l in lines if l)
 
 
 def _looks_like_mealmaster(text):
@@ -1411,6 +1433,20 @@ def parse_mealmaster(text):
             in_directions = True
             cur_para.append(stripped)
         _flush_para()
+
+        # Clean directions: strip embedded RTF markup and drop nutrition blocks
+        cleaned_steps = []
+        for s in steps:
+            for ln in _strip_rtf(s).split("\n"):
+                ln = ln.strip()
+                if ln and not _MM_NUTRITION_RE.search(ln):
+                    cleaned_steps.append(ln)
+        steps = cleaned_steps
+        # Clean any RTF that leaked into ingredient lines
+        for grp in ing_groups:
+            grp["ingredients"] = [i2 for i2 in
+                                  (_strip_rtf(x).replace("\n", " ").strip() for x in grp["ingredients"])
+                                  if i2]
 
         # Drop empty leading group if sections were used exclusively
         ing_groups = [g for g in ing_groups if g["ingredients"]] or [{"purpose": None, "ingredients": []}]
@@ -3758,4 +3794,4 @@ def export_cookbook_route():
 if __name__ == "__main__":
     os.makedirs(os.path.join(BASE_DIR, "static"), exist_ok=True)
     startup()
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
