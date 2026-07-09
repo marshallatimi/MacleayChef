@@ -437,7 +437,8 @@
     .shop-recipe-row { display:flex; align-items:center; gap:0.6rem; padding:0.45rem 0.6rem; border:2px solid var(--border); border-radius:8px; cursor:pointer; transition:border-color 0.15s,box-shadow 0.15s,background 0.15s; background:var(--card); margin-bottom:0.35rem; }
     .shop-recipe-row:hover { border-color:var(--red); box-shadow:0 2px 10px rgba(0,0,0,0.1); background:var(--bg); }
     [data-theme="dark"] .shop-recipe-row:hover { border-color:#ff9080; }
-    .shop-recipe-thumb-placeholder { font-size:1.4rem; line-height:1; flex-shrink:0; }
+    .shop-recipe-thumb { width:42px; height:42px; object-fit:cover; border-radius:6px; flex-shrink:0; }
+    .shop-recipe-thumb-placeholder { width:42px; font-size:1.4rem; line-height:42px; text-align:center; flex-shrink:0; }
     .shop-recipe-info { flex:1; min-width:0; }
     .shop-recipe-title { font-size:0.88rem; font-weight:700; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); }
     .shop-recipe-meta { font-size:0.75rem; color:var(--muted); margin-top:0.1rem; }
@@ -708,14 +709,19 @@
     <!-- Step 1: file chooser (always visible until a file is picked) -->
     <div id="import-choose-step">
       <p style="font-size:0.88rem;color:var(--muted);margin-bottom:0.9rem">
-        Supports Macleay Recipe Manager <strong>.cookbook</strong> files and AccuChef <strong>.csv</strong> exports.
+        Supports Macleay Recipe Manager <strong>.cookbook</strong> files and
+        <strong>.csv</strong> exports (Macleay Recipe Manager or AccuChef).
+        The file is imported as a new cookbook. To add recipes to your
+        <em>current</em> cookbook instead — including <strong>.txt</strong>,
+        <strong>.pdf</strong>, and Meal-Master <strong>.mmf</strong> files —
+        use <strong>📥 Import</strong> on the My Recipes tab.
       </p>
       <!-- The label wraps the real file input — clicking the label IS a user gesture -->
       <label style="display:block;cursor:pointer">
         <span class="btn btn-primary" style="display:inline-block;width:100%;text-align:center;box-sizing:border-box"
               onclick="browseImportFile(event)">📂 Browse for File…</span>
-        <input type="file" id="import-file-input" accept=".cookbook,.rwz,.RWZ"
-               style="display:none" onchange="handleImportFileSelect(this)" accept=".cookbook,.csv">
+        <input type="file" id="import-file-input" accept=".cookbook,.csv"
+               style="display:none" onchange="handleImportFileSelect(this)">
       </label>
     </div>
 
@@ -836,6 +842,10 @@
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem">
         <div style="font-weight:700;font-size:0.88rem;margin-bottom:0.2rem">📊 CSV Spreadsheet <span style="font-size:0.75rem;color:var(--muted);font-weight:400">(.csv)</span></div>
         <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">Supports two formats: <strong>Macleay Recipe Manager CSV</strong> (exported from this app — full fidelity, preserves photos and all fields) and <strong>AccuChef CSV</strong> (exported from AccuChef — imports title, category, servings, ingredients, instructions, and <strong>notes</strong>). <strong>All recipes</strong> in the file will be imported.</div>
+      </div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem">
+        <div style="font-weight:700;font-size:0.88rem;margin-bottom:0.2rem">🍲 Meal-Master File <span style="font-size:0.75rem;color:var(--muted);font-weight:400">(.mmf)</span></div>
+        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">The classic <strong>Meal-Master</strong> export format, also produced by AccuChef and many other recipe programs. Handles <strong>multiple recipes per file</strong> with titles, categories, servings, ingredient sections, and directions. Meal-Master content inside a <strong>.txt</strong> file is detected automatically.</div>
       </div>
     </div>
 
@@ -4764,6 +4774,14 @@ function backToMealsList() {
 }
 
 function renderMealDetail() {
+  // Preserve page scroll, inner-list scroll, and search text across re-renders
+  const _keepY = window.scrollY;
+  const _keepScrolls = {};
+  ["meal-recipe-list", "meal-recipe-browser"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) _keepScrolls[id] = el.scrollTop;
+  });
+  const _keepSearch = document.getElementById("meal-recipe-search")?.value || "";
   const content = document.getElementById("meals-detail-content");
   const m = selectedMeal;
   const inMealIds = new Set(m.recipes.map(r => r.id));
@@ -4855,8 +4873,22 @@ function renderMealDetail() {
       <div id="meal-recipe-list" class="detail-scroll-list">${recipeRows}</div>
       ${addRow}
     </div></div>`;
-  // Render the recipe browser after the HTML is set
+  // Restore search text, then render the browser so results match it
+  const _srch = document.getElementById("meal-recipe-search");
+  if (_srch && _keepSearch) _srch.value = _keepSearch;
   if (available.length) renderMealRecipeBrowser();
+  // Restore page + inner-list scroll so edits don't jump anything to the top
+  Object.entries(_keepScrolls).forEach(([id, top]) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollTop = top;
+  });
+  requestAnimationFrame(() => {
+    window.scrollTo(0, _keepY);
+    Object.entries(_keepScrolls).forEach(([id, top]) => {
+      const el = document.getElementById(id);
+      if (el) el.scrollTop = top;
+    });
+  });
 }
 
 function renderMealRecipeBrowser() {
@@ -6013,10 +6045,12 @@ async function _gmSlotDrop(event, targetSlotId, slotType) {
   if (!g) return;
   const meals   = g.meals;
   const fromIdx = meals.findIndex(m => m.slot_id === _gmDragSlotId);
-  const toIdx   = meals.findIndex(m => m.slot_id === targetSlotId);
-  if (fromIdx < 0 || toIdx < 0) return;
+  if (fromIdx < 0 || meals.findIndex(m => m.slot_id === targetSlotId) < 0) return;
   const [item] = meals.splice(fromIdx, 1);
-  meals.splice(toIdx, 0, item);
+  // Insert BELOW the drop target — dropping onto a section header places the
+  // item inside that section
+  const toIdx = meals.findIndex(m => m.slot_id === targetSlotId);
+  meals.splice(toIdx + 1, 0, item);
   g.meals = meals;
   const order = meals.map(m => m.slot_id);
   await fetch(`/group-meals/${g.id}/slots/reorder`, {
@@ -6054,10 +6088,11 @@ async function _mealRecipeDrop(event, recipeId) {
   const m = selectedMeal;
   if (!m) return;
   const fromIdx = m.recipes.findIndex(r => r.id === _mealRecipeDragId);
-  const toIdx   = m.recipes.findIndex(r => r.id === recipeId);
-  if (fromIdx < 0 || toIdx < 0) return;
+  if (fromIdx < 0 || m.recipes.findIndex(r => r.id === recipeId) < 0) return;
   const [item] = m.recipes.splice(fromIdx, 1);
-  m.recipes.splice(toIdx, 0, item);
+  // Insert BELOW the drop target (consistent with group meal dragging)
+  const toIdx = m.recipes.findIndex(r => r.id === recipeId);
+  m.recipes.splice(toIdx + 1, 0, item);
   const idx = savedMeals.findIndex(sm => sm.id === m.id);
   if (idx !== -1) savedMeals[idx].recipes = [...m.recipes];
   await fetch(`/meals/${m.id}/recipes/reorder`, {
@@ -6083,7 +6118,16 @@ function _gmBatchNote(recipeId, eff) {
 function renderGroupMealDetail() {
   const g = selectedGroupMeal;
   if (!g) return;
-  const _keepY = window.scrollY; // preserve scroll across edit re-renders
+  // Preserve page scroll, inner-list scroll positions, and search text across
+  // edit re-renders so making changes doesn't jump or reset anything
+  const _keepY = window.scrollY;
+  const _keepScrolls = {};
+  ["gm-meal-list", "gm-meal-browser", "gm-recipe-browser"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) _keepScrolls[id] = el.scrollTop;
+  });
+  const _keepMealSearch   = document.getElementById("gm-meal-search")?.value || "";
+  const _keepRecipeSearch = document.getElementById("gm-recipe-search")?.value || "";
   const content = document.getElementById("groupmeal-detail-content");
   const available = savedMeals;
 
@@ -6263,11 +6307,26 @@ function renderGroupMealDetail() {
       <div id="gm-meal-list" class="detail-scroll-list">${mealRows}</div>
       ${addRow}
     </div></div>`;
+  // Restore search text before re-rendering the browsers so results match
+  const _ms = document.getElementById("gm-meal-search");
+  if (_ms && _keepMealSearch) _ms.value = _keepMealSearch;
+  const _rs = document.getElementById("gm-recipe-search");
+  if (_rs && _keepRecipeSearch) _rs.value = _keepRecipeSearch;
   // expand/collapse is now wired via inline onclick on .gm-meal-header
   if (available.length) renderGroupMealBrowser();
   if (savedRecipes.length) renderGroupMealRecipeBrowser();
-  // Restore scroll so edits don't jump the page back to the top
-  requestAnimationFrame(() => window.scrollTo(0, _keepY));
+  // Restore page + inner-list scroll so edits don't jump anything to the top
+  Object.entries(_keepScrolls).forEach(([id, top]) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollTop = top;
+  });
+  requestAnimationFrame(() => {
+    window.scrollTo(0, _keepY);
+    Object.entries(_keepScrolls).forEach(([id, top]) => {
+      const el = document.getElementById(id);
+      if (el) el.scrollTop = top;
+    });
+  });
 }
 
 async function addGmSection() {
