@@ -240,6 +240,21 @@ def startup():
 
 app = Flask(__name__, static_folder=os.path.join(BASE_DIR, "static"))
 
+# Track the cookbook file's mtime after each of OUR OWN writes, so the
+# external-change watcher can tell self-inflicted changes from genuinely
+# external ones (another computer editing a linked cookbook).
+_last_self_write = {"mtime": 0.0}
+
+
+@app.after_request
+def _track_self_writes(resp):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        try:
+            _last_self_write["mtime"] = os.path.getmtime(active_db_path())
+        except OSError:
+            pass
+    return resp
+
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
@@ -383,7 +398,8 @@ def init_db():
                         recipe_id       INTEGER DEFAULT NULL,
                         servings        REAL    DEFAULT NULL,
                         sort_order      INTEGER DEFAULT 0,
-                        recipe_servings TEXT    DEFAULT NULL
+                        recipe_servings TEXT    DEFAULT NULL,
+                        section_title   TEXT    DEFAULT NULL
                     )
                 """)
                 copied = False
@@ -418,7 +434,7 @@ def init_db():
             else:
                 # Already migrated – just add any missing optional columns
                 for col in ["servings REAL DEFAULT NULL", "recipe_servings TEXT DEFAULT NULL",
-                            "recipe_id INTEGER DEFAULT NULL"]:
+                            "recipe_id INTEGER DEFAULT NULL", "section_title TEXT DEFAULT NULL"]:
                     try:
                         conn.execute(f"ALTER TABLE group_meal_members ADD COLUMN {col}")
                     except Exception:
@@ -433,7 +449,8 @@ def init_db():
                     recipe_id       INTEGER DEFAULT NULL,
                     servings        REAL    DEFAULT NULL,
                     sort_order      INTEGER DEFAULT 0,
-                    recipe_servings TEXT    DEFAULT NULL
+                    recipe_servings TEXT    DEFAULT NULL,
+                    section_title   TEXT    DEFAULT NULL
                 )
             """)
 
@@ -1296,17 +1313,137 @@ def import_pdf_text():
             pass
 
 
+_MM_HEADER_RE = re.compile(r'^(?:M{5}|-{5,})[- ]*Recipe (?:via|Extracted from) Meal-?Master', re.I | re.M)
+_MM_END_RE    = re.compile(r'^(?:M{5}|-{5,})\s*$', re.M)
+
+
+def _looks_like_mealmaster(text):
+    head = text[:4000]
+    return bool(_MM_HEADER_RE.search(head)) or bool(re.search(r'^MMMMM', head, re.M))
+
+
+def parse_mealmaster(text):
+    """Parse a Meal-Master (tm) export file. Returns a list of recipe dicts.
+    Handles multiple recipes per file, ingredient section headers, and both
+    the '-----' and 'MMMMM' delimiter styles."""
+    recipes = []
+    # Split the file into recipe blocks at each Meal-Master header line
+    starts = [m.start() for m in _MM_HEADER_RE.finditer(text)]
+    if not starts:
+        starts = [0]
+    blocks = [text[s:e] for s, e in zip(starts, starts[1:] + [len(text)])]
+
+    section_re = re.compile(r'^(?:M{5}|-{5,})-*\s*([^-].*?)\s*-{3,}\s*$')
+
+    for block in blocks:
+        lines = block.split("\n")
+        title, servings, cats = None, None, []
+        i = 0
+        # Header fields (Title / Categories / Yield / Servings)
+        while i < len(lines):
+            ln = lines[i].strip()
+            m = re.match(r'^Title:\s*(.+)$', ln, re.I)
+            if m: title = m.group(1).strip(); i += 1; continue
+            m = re.match(r'^Categories:\s*(.+)$', ln, re.I)
+            if m:
+                cats = [c.strip() for c in m.group(1).split(",") if c.strip()][:5]
+                i += 1; continue
+            m = re.match(r'^(?:Yield|Servings):\s*(.+)$', ln, re.I)
+            if m: servings = m.group(1).strip(); i += 1; break
+            i += 1
+        if not title:
+            continue
+
+        ing_groups = [{"purpose": None, "ingredients": []}]
+        steps = []
+        cur_para = []
+        in_directions = False
+
+        def _flush_para():
+            if cur_para:
+                steps.append(" ".join(cur_para).strip())
+                cur_para.clear()
+
+        for ln in lines[i:]:
+            raw = ln.rstrip()
+            stripped = raw.strip()
+            # End-of-recipe marker
+            if _MM_END_RE.match(raw) and "Meal-Master" not in raw:
+                break
+            if not stripped:
+                _flush_para()
+                continue
+            # Ingredient section header, e.g. MMMMM------------SAUCE-----------
+            sm = section_re.match(stripped)
+            if sm and not in_directions:
+                ing_groups.append({"purpose": sm.group(1).title().strip(), "ingredients": []})
+                continue
+            # Canonical MM ingredient layout: qty cols 0-6, unit cols 8-9, name col 11+
+            is_ing = False
+            if not in_directions and len(raw) >= 12 and raw[7:8] == " " and raw[10:11] == " ":
+                qty  = raw[0:7]
+                unit = raw[8:10]
+                name = raw[11:].strip()
+                if name and re.fullmatch(r'[\d ./x-]*', qty) and re.fullmatch(r'[A-Za-z ]{0,2}', unit):
+                    if name.startswith("-"):
+                        # continuation of the previous ingredient line
+                        if ing_groups[-1]["ingredients"]:
+                            ing_groups[-1]["ingredients"][-1] += " " + name.lstrip("- ").strip()
+                            is_ing = True
+                    else:
+                        parts = [qty.strip(), unit.strip(), name]
+                        ing_groups[-1]["ingredients"].append(" ".join(p for p in parts if p))
+                        is_ing = True
+            # Fallback for files whose column alignment was lost (copied/reflowed):
+            # a short, indented, number-led line without sentence punctuation.
+            if not is_ing and not in_directions:
+                fm = re.match(r'^\s{1,12}(\d[\d ./x-]{0,8})\s+(\S.*)$', raw)
+                if fm and len(fm.group(2)) < 60 and not fm.group(2).rstrip().endswith("."):
+                    ing_groups[-1]["ingredients"].append(
+                        re.sub(r'\s{2,}', ' ', (fm.group(1) + " " + fm.group(2)).strip()))
+                    is_ing = True
+                elif re.match(r'^\s{8,}-', raw) and ing_groups[-1]["ingredients"]:
+                    ing_groups[-1]["ingredients"][-1] += " " + raw.strip().lstrip("- ").strip()
+                    is_ing = True
+            if is_ing:
+                continue
+            # Anything else is directions prose
+            in_directions = True
+            cur_para.append(stripped)
+        _flush_para()
+
+        # Drop empty leading group if sections were used exclusively
+        ing_groups = [g for g in ing_groups if g["ingredients"]] or [{"purpose": None, "ingredients": []}]
+        flat_ings = [i2 for g in ing_groups for i2 in g["ingredients"]]
+        if not flat_ings and not steps:
+            continue
+        num_m = re.search(r'\d+(?:\.\d+)?', servings or "")
+        recipes.append({
+            "title": title,
+            "servings": servings,
+            "servings_num": float(num_m.group(0)) if num_m else None,
+            "categories": cats,
+            "category": cats[0] if cats else None,
+            "ingredients": flat_ings,
+            "ingredient_groups": ing_groups,
+            "instructions": steps,
+            "instruction_groups": [{"purpose": None, "steps": steps}],
+            "directions_text": "\n".join(steps) or None,
+        })
+    return recipes
+
+
 @app.route("/recipes/import-file", methods=["POST"])
 def import_recipes_to_current():
-    """Upload a .txt / .cookbook / .csv and add its recipes to the active cookbook."""
+    """Upload a .txt / .mmf / .cookbook / .csv and add its recipes to the active cookbook."""
     import tempfile
     f = request.files.get("file")
     if not f:
         return jsonify({"error": "No file uploaded"}), 400
 
     ext = os.path.splitext(f.filename or "")[1].lower()
-    if ext not in (".txt", ".cookbook", ".csv"):
-        return jsonify({"error": "Unsupported file type. Use .txt, .cookbook, or .csv"}), 400
+    if ext not in (".txt", ".mmf", ".cookbook", ".csv"):
+        return jsonify({"error": "Unsupported file type. Use .txt, .mmf, .cookbook, or .csv"}), 400
 
     tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False, dir=DATA_DIR)
     f.save(tmp.name)
@@ -1314,11 +1451,14 @@ def import_recipes_to_current():
 
     try:
         recipes = []
-        if ext == ".txt":
+        if ext in (".txt", ".mmf"):
             text = open(tmp.name, encoding="utf-8-sig", errors="replace").read()
-            r = parse_text_recipe(text)
-            if r:
-                recipes = [r]
+            if ext == ".mmf" or _looks_like_mealmaster(text):
+                recipes = parse_mealmaster(text)
+            else:
+                r = parse_text_recipe(text)
+                if r:
+                    recipes = [r]
         elif ext == ".cookbook":
             conn2 = sqlite3.connect(tmp.name)
             conn2.row_factory = sqlite3.Row
@@ -1350,14 +1490,20 @@ def save_recipe():
     ig = data.get("ingredient_groups")
     sg = data.get("instruction_groups")
     cats, category = _categories_payload(data)
+    # Populate directions_text so the Directions box isn't empty on new recipes:
+    # explicit value wins, else flatten the structured steps into plain text.
+    directions = (data.get("directions_text") or "").strip()
+    if not directions:
+        steps = flatten_groups(sg, "steps") if sg else data.get("instructions", [])
+        directions = "\n".join(s.strip() for s in (steps or []) if s and s.strip())
     db = get_db()
     try:
         cur = db.execute(
             """INSERT INTO recipes
                (title, servings, servings_num, ingredients, instructions,
                 ingredient_groups, instruction_groups, image, total_time, site_name, source_url, category, categories,
-                base_recipe, scale_by_batch)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                base_recipe, scale_by_batch, directions_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("title", "Untitled"),
                 data.get("servings"),
@@ -1374,6 +1520,7 @@ def save_recipe():
                 json.dumps(cats) if cats else None,
                 data.get("base_recipe") or None,
                 1 if data.get("scale_by_batch") else 0,
+                directions or None,
             ),
         )
         db.commit()
@@ -1840,7 +1987,7 @@ def list_group_meals():
         f"""SELECT gm.group_id, gm.row_id AS slot_id,
                    gm.meal_id, m.name AS meal_name,
                    gm.recipe_id, r.title AS recipe_title,
-                   gm.servings, gm.recipe_servings
+                   gm.servings, gm.recipe_servings, gm.section_title
             FROM group_meal_members gm
             LEFT JOIN meals   m ON m.id = gm.meal_id
             LEFT JOIN recipes r ON r.id = gm.recipe_id
@@ -1852,7 +1999,11 @@ def list_group_meals():
     for ml in all_members:
         gid = ml["group_id"]
         md  = dict(ml)
-        if md.get("recipe_id"):
+        if md.get("section_title"):
+            md["type"] = "header"
+            md["id"]   = None
+            md["name"] = md["section_title"]
+        elif md.get("recipe_id"):
             md["type"] = "recipe"
             md["id"]   = md["recipe_id"]
             md["name"] = md.get("recipe_title") or "Unknown Recipe"
@@ -1940,10 +2091,38 @@ def add_recipe_to_group(gid):
     return jsonify({"ok": True, "slot_id": cur.lastrowid})
 
 
+@app.route("/group-meals/<int:gid>/sections", methods=["POST"])
+def add_section_to_group(gid):
+    """Insert a section header slot into a group meal."""
+    data = request.get_json()
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title required"}), 400
+    db = get_db()
+    row = db.execute(
+        "SELECT COALESCE(MAX(sort_order), -1) FROM group_meal_members WHERE group_id=?", (gid,)
+    ).fetchone()
+    next_order = (row[0] if row else -1) + 1
+    cur = db.execute(
+        "INSERT INTO group_meal_members (group_id, meal_id, section_title, sort_order) VALUES (?,?,?,?)",
+        (gid, 0, title, next_order)
+    )
+    db.commit()
+    return jsonify({"ok": True, "slot_id": cur.lastrowid})
+
+
 @app.route("/group-meals/<int:gid>/slots/<int:slot_id>", methods=["PATCH"])
 def patch_group_meal_member(gid, slot_id):
     data = request.get_json()
     db = get_db()
+    # Section-header rename
+    if "section_title" in data:
+        title = (data.get("section_title") or "").strip()
+        if title:
+            db.execute("UPDATE group_meal_members SET section_title=? WHERE row_id=? AND group_id=?",
+                       (title, slot_id, gid))
+            db.commit()
+        return jsonify({"ok": True})
     srv = data.get("servings")
     srv = float(srv) if srv not in (None, "", "null") else None
     rs = data.get("recipe_servings")
@@ -1985,12 +2164,17 @@ def reorder_group_meal_slots(gid):
 def cookbook_mtime():
     """Modification time of the active cookbook file. Used by the frontend to
     detect external changes (e.g. cloud sync updating a linked cookbook) and
-    reload its caches instead of showing stale data."""
+    reload its caches instead of showing stale data. "self" is true when the
+    latest change to the file was made by this app instance's own writes."""
     try:
         st = os.stat(active_db_path())
-        return jsonify({"mtime": st.st_mtime, "size": st.st_size})
+        return jsonify({
+            "mtime": st.st_mtime,
+            "size": st.st_size,
+            "self": abs(st.st_mtime - _last_self_write["mtime"]) < 0.0005,
+        })
     except OSError:
-        return jsonify({"mtime": None, "size": None})
+        return jsonify({"mtime": None, "size": None, "self": False})
 
 
 @app.route("/file/current")
