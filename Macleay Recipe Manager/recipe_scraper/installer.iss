@@ -1,13 +1,13 @@
-; Macleay Recipe Manager – Inno Setup 6 installer script
+; MacleayChef – Inno Setup 6 installer script
 ; Build:  iscc /DAppVersion=1.0.0 installer.iss
-; Output: Output\MacleayRecipeManager-Setup.exe
+; Output: Output\MacleayChef-Setup.exe
 
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
 
-#define AppName      "Macleay Recipe Manager"
-#define AppPublisher "Macleay Recipe Manager"
+#define AppName      "MacleayChef"
+#define AppPublisher "MacleayChef"
 #define AppExeName   "RecipeManager.exe"
 #define AppId        "{{A3F8C2B1-7D4E-4A9F-B621-3E5D8F1C9A7B}"
 
@@ -16,9 +16,9 @@ AppId={#AppId}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-AppPublisherURL=https://github.com/marshallatimi/Macleay-Recipe-Manager
-AppSupportURL=https://github.com/marshallatimi/Macleay-Recipe-Manager/issues
-AppUpdatesURL=https://github.com/marshallatimi/Macleay-Recipe-Manager/releases
+AppPublisherURL=https://github.com/marshallatimi/MacleayChef
+AppSupportURL=https://github.com/marshallatimi/MacleayChef/issues
+AppUpdatesURL=https://github.com/marshallatimi/MacleayChef/releases
 
 ; Install to Program Files
 DefaultDirName={autopf}\{#AppName}
@@ -27,7 +27,7 @@ DisableProgramGroupPage=yes
 
 ; Output
 OutputDir=Output
-OutputBaseFilename=MacleayRecipeManager-Setup
+OutputBaseFilename=MacleayChef-Setup
 SetupIconFile=icon.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 
