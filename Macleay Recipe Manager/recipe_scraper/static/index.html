@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Macleay Recipe Manager</title>
+  <title>MacleayChef</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     [hidden] { display: none !important; }
@@ -709,8 +709,8 @@
     <!-- Step 1: file chooser (always visible until a file is picked) -->
     <div id="import-choose-step">
       <p style="font-size:0.88rem;color:var(--muted);margin-bottom:0.9rem">
-        Supports Macleay Recipe Manager <strong>.cookbook</strong> files and
-        <strong>.csv</strong> exports (Macleay Recipe Manager or AccuChef).
+        Supports MacleayChef <strong>.cookbook</strong> files and
+        <strong>.csv</strong> exports (MacleayChef or AccuChef).
         The file is imported as a new cookbook. To add recipes to your
         <em>current</em> cookbook instead — including <strong>.txt</strong>,
         <strong>.pdf</strong>, and Meal-Master <strong>.mmf</strong> files —
@@ -837,11 +837,11 @@
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem">
         <div style="font-weight:700;font-size:0.88rem;margin-bottom:0.2rem">📚 Cookbook File <span style="font-size:0.75rem;color:var(--muted);font-weight:400">(.cookbook)</span></div>
-        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">A Macleay Recipe Manager cookbook exported from this app or another copy. <strong>Every recipe</strong> in the cookbook will be imported into your current cookbook.</div>
+        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">A MacleayChef cookbook exported from this app or another copy. <strong>Every recipe</strong> in the cookbook will be imported into your current cookbook.</div>
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem">
         <div style="font-weight:700;font-size:0.88rem;margin-bottom:0.2rem">📊 CSV Spreadsheet <span style="font-size:0.75rem;color:var(--muted);font-weight:400">(.csv)</span></div>
-        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">Supports two formats: <strong>Macleay Recipe Manager CSV</strong> (exported from this app — full fidelity, preserves photos and all fields) and <strong>AccuChef CSV</strong> (exported from AccuChef — imports title, category, servings, ingredients, instructions, and <strong>notes</strong>). <strong>All recipes</strong> in the file will be imported.</div>
+        <div style="font-size:0.82rem;color:var(--muted);line-height:1.5">Supports two formats: <strong>MacleayChef CSV</strong> (exported from this app — full fidelity, preserves photos and all fields) and <strong>AccuChef CSV</strong> (exported from AccuChef — imports title, category, servings, ingredients, instructions, and <strong>notes</strong>). <strong>All recipes</strong> in the file will be imported.</div>
       </div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem">
         <div style="font-weight:700;font-size:0.88rem;margin-bottom:0.2rem">🍲 Meal-Master File <span style="font-size:0.75rem;color:var(--muted);font-weight:400">(.mmf)</span></div>
@@ -3343,9 +3343,9 @@ async function handleIRFileSelect(input) {
         document.getElementById("ir-status").textContent = data.error || "Could not read file.";
         return;
       }
-      const typeLabel = data.type === "csv_rm" ? "Macleay Recipe Manager CSV"
+      const typeLabel = data.type === "csv_rm" ? "MacleayChef CSV"
                       : data.type === "csv"    ? "AccuChef CSV"
-                      : "Recipe Manager Cookbook";
+                      : "MacleayChef Cookbook";
       preview.innerHTML = `<strong>Type:</strong> ${typeLabel}<br>
         <strong>Recipes found:</strong> ${data.recipeCount}<br>
         <span style="color:var(--muted)">All ${data.recipeCount} recipe${data.recipeCount!==1?"s":""} will be added to your current cookbook.</span>`;
@@ -3948,7 +3948,7 @@ const HELP_CONTENT = {
     </ul>
     <h4>Exporting</h4>
     <ul>
-      <li>Click the <strong>📤</strong> icon on any cookbook card to save it as a Macleay CSV file</li>
+      <li>Click the <strong>📤</strong> icon on any cookbook card to save it as a MacleayChef CSV file</li>
     </ul>
     <div class="help-tip">💡 To share a cookbook across multiple computers, put the .cookbook file in a cloud-synced folder (e.g. OneDrive) and use <strong>Link External Cookbook</strong> on each computer.</div>`,
 
@@ -3957,9 +3957,9 @@ const HELP_CONTENT = {
     <p>Click <strong>📥 Import</strong> on the My Recipes page. Supports four file types:</p>
     <ul>
       <li><strong>.txt — Text file</strong>: A single recipe. First line = title. Label sections <em>Ingredients:</em> and <em>Instructions:</em>, one item per line. Optional lines: <em>Servings:</em>, <em>Category:</em>, <em>Time:</em>, <em>Source:</em></li>
-      <li><strong>.pdf — Printed recipe PDF</strong>: A PDF that was printed or exported from Macleay Recipe Manager. The app will extract the text and import the recipe automatically</li>
+      <li><strong>.pdf — Printed recipe PDF</strong>: A PDF that was printed or exported from MacleayChef. The app will extract the text and import the recipe automatically</li>
       <li><strong>.cookbook — Cookbook file</strong>: Every recipe inside gets added to your current cookbook</li>
-      <li><strong>.csv — Spreadsheet</strong>: Supports Macleay Recipe Manager CSV (full fidelity) and AccuChef CSV</li>
+      <li><strong>.csv — Spreadsheet</strong>: Supports MacleayChef CSV (full fidelity) and AccuChef CSV</li>
     </ul>
     <h4>Importing as a new cookbook</h4>
     <ul>
@@ -3969,9 +3969,9 @@ const HELP_CONTENT = {
     <h4>Exporting a cookbook</h4>
     <ul>
       <li>Click the <strong>📤</strong> icon on any cookbook card in the Cookbooks tab</li>
-      <li>Saves as a Macleay Recipe Manager CSV — all photos are embedded so the file is fully self-contained</li>
+      <li>Saves as a MacleayChef CSV — all photos are embedded so the file is fully self-contained</li>
     </ul>
-    <div class="help-tip">💡 Macleay Recipe Manager CSV is the best format for backups — it round-trips perfectly with no data loss.</div>`,
+    <div class="help-tip">💡 MacleayChef CSV is the best format for backups — it round-trips perfectly with no data loss.</div>`,
 
   meals: `<h3>🍽️ Meals</h3>
     <p>A <strong>Meal</strong> is a named group of recipes — useful for planning dinner parties, weekly menus, or themed nights.</p>
@@ -4091,10 +4091,10 @@ const HELP_CONTENT = {
     </ul>
     <div class="help-tip">💡 All settings are saved automatically and restored next time you open the app.</div>`,
 
-  about: `<h3>ℹ️ About Macleay Recipe Manager</h3>
+  about: `<h3>ℹ️ About MacleayChef</h3>
     <div style="text-align:center;padding:1rem 0">
       <div style="font-size:2.5rem;margin-bottom:0.4rem">🍴</div>
-      <div style="font-size:1.1rem;font-weight:800;margin-bottom:0.2rem">Macleay Recipe Manager</div>
+      <div style="font-size:1.1rem;font-weight:800;margin-bottom:0.2rem">MacleayChef</div>
       <div style="font-size:0.85rem;color:var(--muted)">Version v1.2.9 &nbsp;·&nbsp; Built with Flask &amp; pywebview</div>
     </div>
     <h4>What it is</h4>
@@ -4459,10 +4459,10 @@ async function _peekAndPreview(path, filename) {
   }
   _importFilePath = path;
   const typeBadge = data.type === "csv_rm"
-    ? `<span class="import-type-badge import-type-cookbook">Macleay Recipe Manager CSV</span>`
+    ? `<span class="import-type-badge import-type-cookbook">MacleayChef CSV</span>`
     : data.type === "csv"
     ? `<span class="import-type-badge import-type-csv">AccuChef CSV</span>`
-    : `<span class="import-type-badge import-type-cookbook">Macleay Recipe Manager</span>`;
+    : `<span class="import-type-badge import-type-cookbook">MacleayChef</span>`;
   document.getElementById("import-choose-step").hidden = true;
   document.getElementById("import-preview-box").innerHTML =
     `${typeBadge} &nbsp;<strong>${filename}</strong><br><strong>Recipes found:</strong> ${data.recipeCount}`;
@@ -7053,6 +7053,13 @@ function doPrint(fullHtml) {
 }
 
 const CHANGELOG = [
+  {
+    version: "v1.6.0",
+    notes: [
+      "Rebranded to MacleayChef — new name and new app icon throughout",
+      "Your recipes carry over automatically: the app moves your existing data folder to Documents\\MacleayChef on first run",
+    ]
+  },
   {
     version: "v1.3.21",
     notes: [

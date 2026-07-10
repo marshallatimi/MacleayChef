@@ -30,13 +30,13 @@ VSVersionInfo(
     StringFileInfo([
       StringTable(
         u'040904B0',
-        [StringStruct(u'CompanyName',      u'Macleay Recipe Manager'),
-         StringStruct(u'FileDescription',  u'Macleay Recipe Manager'),
+        [StringStruct(u'CompanyName',      u'MacleayChef'),
+         StringStruct(u'FileDescription',  u'MacleayChef'),
          StringStruct(u'FileVersion',      u'{v_string}'),
          StringStruct(u'InternalName',     u'RecipeManager'),
-         StringStruct(u'LegalCopyright',   u'\\u00a9 2025 Macleay Recipe Manager'),
+         StringStruct(u'LegalCopyright',   u'\\u00a9 2025 MacleayChef'),
          StringStruct(u'OriginalFilename', u'RecipeManager.exe'),
-         StringStruct(u'ProductName',      u'Macleay Recipe Manager'),
+         StringStruct(u'ProductName',      u'MacleayChef'),
          StringStruct(u'ProductVersion',   u'{short_ver}')])
     ]),
     VarFileInfo([VarStruct(u'Translation', [0x0409, 1200])])

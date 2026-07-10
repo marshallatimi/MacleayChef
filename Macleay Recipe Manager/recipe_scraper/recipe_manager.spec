@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for Macleay Recipe Manager
+# PyInstaller spec for MacleayChef
 # Build locally:
 #   python generate_icon.py
 #   python create_version_info.py 1.0.0
@@ -12,6 +12,7 @@ import os
 datas = [
     ('static', 'static'),
     ('_version.py', '.'),        # version string read at runtime
+    ('icon.png', '.'),           # app logo → runtime taskbar icon (launcher.py)
 ]
 
 # recipe_scrapers and its full dependency tree ship data files

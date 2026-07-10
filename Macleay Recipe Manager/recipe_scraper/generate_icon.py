@@ -1,64 +1,31 @@
 """
-generate_icon.py - creates icon.ico in the project root.
+generate_icon.py - creates icon.ico from the MacleayChef logo (icon.png).
 Run manually or automatically by CI before PyInstaller:
   python generate_icon.py
 
-Draws a side-view frying-pan silhouette (white) on the app's red background,
-matching the reference image: oval pan body with visible inner rim and a long
-handle extending to the upper-right.
+Loads icon.png (transparent background) and emits a multi-resolution icon.ico
+that preserves the alpha channel, for the exe, installer, and shortcuts.
 """
 import os, sys
 
 
-def generate(dest="icon.ico"):
+def generate(dest="icon.ico", src="icon.png"):
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image
     except ImportError:
         print("Pillow not installed - skipping icon generation.")
         return False
 
-    sizes = [16, 24, 32, 48, 64, 128, 256]
-    frames = []
+    here     = os.path.dirname(os.path.abspath(__file__))
+    src_path = src if os.path.isabs(src) else os.path.join(here, src)
+    if not os.path.isfile(src_path):
+        print(f"Source logo not found: {src_path}")
+        return False
 
-    for sz in sizes:
-        img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
-        d   = ImageDraw.Draw(img)
-        s   = sz / 64  # scale relative to 64-px design grid
+    master = Image.open(src_path).convert("RGBA")
 
-        # ── Rounded-square background (app red) ──────────────────────────────
-        bg_rad = max(2, int(sz * 0.20))
-        d.rounded_rectangle(
-            [0, 0, sz - 1, sz - 1],
-            radius=bg_rad,
-            fill=(192, 57, 43, 255),
-        )
-
-        white = (255, 255, 255, 255)
-        red   = (192, 57, 43, 255)   # background colour, used for inner-rim cutout
-
-        # ── Pan body ──────────────────────────────────────────────────────────
-        # Wide shallow oval representing the pan body (side/angle view)
-        d.ellipse([2*s, 26*s, 38*s, 54*s], fill=white)
-
-        # Inner cooking-surface cutout: background colour oval at the top of
-        # the pan body shows the depth/rim of the pan
-        d.ellipse([5*s, 20*s, 35*s, 33*s], fill=red)
-
-        # ── Handle ────────────────────────────────────────────────────────────
-        # Tapered polygon from pan (wide end) to grip (narrow end),
-        # angling up to the upper-right like the reference image
-        handle_pts = [
-            (34*s, 29*s),   # top at pan end
-            (38*s, 35*s),   # bottom at pan end
-            (61*s, 11*s),   # bottom at grip end
-            (57*s,  6*s),   # top at grip end
-        ]
-        d.polygon(handle_pts, fill=white)
-
-        # Rounded cap at grip end
-        d.ellipse([55*s, 5*s, 63*s, 12*s], fill=white)
-
-        frames.append(img)
+    sizes  = [16, 24, 32, 48, 64, 128, 256]
+    frames = [master.resize((sz, sz), Image.LANCZOS) for sz in sizes]
 
     out = os.path.abspath(dest)
     frames[0].save(

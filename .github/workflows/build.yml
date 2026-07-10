@@ -84,7 +84,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RecipeManager-Installer-${{ steps.ver.outputs.VERSION }}
-          path: 'Macleay Recipe Manager/recipe_scraper/Output/MacleayRecipeManager-Setup.exe'
+          path: 'Macleay Recipe Manager/recipe_scraper/Output/MacleayChef-Setup.exe'
           retention-days: 30
 
       # ── 11. Create GitHub Release (tag pushes only) ───────────────────────────
@@ -92,35 +92,35 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: "Macleay Recipe Manager ${{ github.ref_name }}"
+          name: "MacleayChef ${{ github.ref_name }}"
           body: |
-            ## 🍴 Macleay Recipe Manager ${{ github.ref_name }}
+            ## 🍴 MacleayChef ${{ github.ref_name }}
 
             ### Download
 
             | File | What it is |
             |------|-----------|
-            | **MacleayRecipeManager-Setup.exe** | ✅ **Recommended** — Windows installer. Adds Start Menu & desktop shortcut, includes uninstaller. |
+            | **MacleayChef-Setup.exe** | ✅ **Recommended** — Windows installer. Adds Start Menu & desktop shortcut, includes uninstaller. |
             | **RecipeManager.exe** | 🗂️ **Portable** — single file, no install required. Run it from anywhere. |
 
             > **Requirements:** Windows 10 or later (WebView2 / Microsoft Edge is built in)
 
             ### Installation (installer)
-            1. Download **MacleayRecipeManager-Setup.exe**
+            1. Download **MacleayChef-Setup.exe**
             2. Run it and follow the wizard (takes ~30 seconds)
             3. Launch from your desktop or Start menu
 
             ### Portable use
             1. Download **RecipeManager.exe**
             2. Put it anywhere you like and double-click — that's it
-            3. Your recipes are saved in `Documents\Macleay Recipe Manager\`
+            3. Your recipes are saved in `Documents\MacleayChef\`
 
             ### Your data is safe across updates
             Recipes, cookbooks, and photos are stored in your **Documents** folder
-            (`Documents\Macleay Recipe Manager\`), not inside the app directory,
+            (`Documents\MacleayChef\`), not inside the app directory,
             so they survive installs, updates, and uninstalls.
           files: |
-            Macleay Recipe Manager/recipe_scraper/Output/MacleayRecipeManager-Setup.exe
+            Macleay Recipe Manager/recipe_scraper/Output/MacleayChef-Setup.exe
             Macleay Recipe Manager/recipe_scraper/dist/RecipeManager.exe
           draft: false
           prerelease: false

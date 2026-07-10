@@ -1,9 +1,9 @@
-# 🍴 Macleay Recipe Manager
+# 🍴 MacleayChef
 
 A polished desktop recipe manager for Windows. Scrape recipes from any cooking website, build shopping lists, plan meals, and export to PDF — all in a native desktop app with no browser needed.
 
-[![Latest Release](https://img.shields.io/github/v/release/marshallatimi/Macleay-Recipe-Manager?label=download&logo=github)](https://github.com/marshallatimi/Macleay-Recipe-Manager/releases/latest)
-[![Build](https://github.com/marshallatimi/Macleay-Recipe-Manager/actions/workflows/build.yml/badge.svg)](https://github.com/marshallatimi/Macleay-Recipe-Manager/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/marshallatimi/MacleayChef?label=download&logo=github)](https://github.com/marshallatimi/MacleayChef/releases/latest)
+[![Build](https://github.com/marshallatimi/MacleayChef/actions/workflows/build.yml/badge.svg)](https://github.com/marshallatimi/MacleayChef/actions/workflows/build.yml)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -15,7 +15,7 @@ Go to the **[Releases](../../releases/latest)** page and grab one of:
 
 | File | Description |
 |------|-------------|
-| **MacleayRecipeManager-Setup.exe** | ✅ Recommended — installer with Start Menu & desktop shortcut |
+| **MacleayChef-Setup.exe** | ✅ Recommended — installer with Start Menu & desktop shortcut |
 | **RecipeManager.exe** | Portable — single file, run from anywhere, no install needed |
 
 > **Requires Windows 10 or later.** Microsoft Edge (WebView2) is built into Windows 10+ — no extra installs needed.
@@ -52,11 +52,11 @@ Go to the **[Releases](../../releases/latest)** page and grab one of:
 
 ## 🚀 Quick Start (installer)
 
-1. Download **MacleayRecipeManager-Setup.exe** from [Releases](../../releases/latest)
+1. Download **MacleayChef-Setup.exe** from [Releases](../../releases/latest)
 2. Run the installer and follow the wizard (~30 seconds)
 3. Launch from your desktop or Start menu
 
-Your data is saved in `Documents\Macleay Recipe Manager\` — it survives updates and uninstalls.
+Your data is saved in `Documents\MacleayChef\` — it survives updates and uninstalls.
 
 ---
 
@@ -64,7 +64,7 @@ Your data is saved in `Documents\Macleay Recipe Manager\` — it survives update
 
 1. Download **RecipeManager.exe**
 2. Put it anywhere (USB drive, Desktop, etc.) and double-click
-3. Recipes are saved to `Documents\Macleay Recipe Manager\` on your PC
+3. Recipes are saved to `Documents\MacleayChef\` on your PC
 
 ---
 
@@ -73,8 +73,8 @@ Your data is saved in `Documents\Macleay Recipe Manager\` — it survives update
 ### Run from source (Python 3.10+)
 
 ```bash
-git clone https://github.com/marshallatimi/Recipe-Manager.git
-cd Recipe-Manager
+git clone https://github.com/marshallatimi/MacleayChef.git
+cd MacleayChef
 pip install -r requirements.txt
 python launcher.py
 ```
@@ -94,7 +94,7 @@ pyinstaller recipe_manager.spec
 ```bash
 # (Requires Inno Setup 6 — https://jrsoftware.org/isinfo.php)
 iscc /DAppVersion=1.0.0 installer.iss
-# → Output/MacleayRecipeManager-Setup.exe
+# → Output/MacleayChef-Setup.exe
 ```
 
 ### Release a new version
@@ -106,7 +106,7 @@ git push origin v1.2.0
 
 GitHub Actions automatically:
 1. Builds `RecipeManager.exe` with PyInstaller
-2. Packages it into `MacleayRecipeManager-Setup.exe` with Inno Setup
+2. Packages it into `MacleayChef-Setup.exe` with Inno Setup
 3. Creates a GitHub Release with both files attached
 
 ---
@@ -130,6 +130,6 @@ All your data lives locally on your machine — no cloud, no accounts, no teleme
 
 | Path | Contents |
 |------|----------|
-| `Documents\Macleay Recipe Manager\cookbooks\` | Your cookbook `.cookbook` files |
-| `Documents\Macleay Recipe Manager\static\uploads\` | Recipe photos |
-| `Documents\Macleay Recipe Manager\settings.json` | App settings (theme, font size, etc.) |
+| `Documents\MacleayChef\cookbooks\` | Your cookbook `.cookbook` files |
+| `Documents\MacleayChef\static\uploads\` | Recipe photos |
+| `Documents\MacleayChef\settings.json` | App settings (theme, font size, etc.) |

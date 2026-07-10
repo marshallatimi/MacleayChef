@@ -1,5 +1,5 @@
 """
-Macleay Recipe Manager – desktop launcher
+MacleayChef – desktop launcher
 ------------------------------------------
 Starts the Flask server on a free port and opens a native desktop window
 via pywebview.  Works as a plain Python script and as a PyInstaller .exe.
@@ -53,7 +53,18 @@ def _find_edge() -> str:
 if getattr(sys, "frozen", False):
     BASE_DIR = sys._MEIPASS                          # type: ignore[attr-defined]
     # When installed to Program Files, write user data to Documents instead
-    DATA_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Macleay Recipe Manager")
+    DATA_DIR = os.path.join(os.path.expanduser("~"), "Documents", "MacleayChef")
+    # One-time migration from the pre-rebrand data folder so existing recipes,
+    # cookbooks, photos, backups, and settings carry over seamlessly.
+    _old_data = os.path.join(os.path.expanduser("~"), "Documents", "Macleay Recipe Manager")
+    if not os.path.exists(DATA_DIR) and os.path.isdir(_old_data):
+        try:
+            os.rename(_old_data, DATA_DIR)
+        except Exception:
+            try:
+                shutil.copytree(_old_data, DATA_DIR)
+            except Exception:
+                pass
     os.makedirs(DATA_DIR, exist_ok=True)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +135,7 @@ class FileApi:
         result = webview.windows[0].create_file_dialog(
             webview.OPEN_DIALOG,
             file_types=(
-                'Macleay Recipe Manager Cookbook (*.cookbook)',
+                'MacleayChef Cookbook (*.cookbook)',
                 'AccuChef CSV Export (*.csv)',
                 'All files (*.*)',
             )
@@ -231,43 +242,19 @@ class FileApi:
 
 
 def _generate_app_icon() -> str | None:
-    """Generate a frying-pan ICO file in the temp dir. Returns path or None."""
+    """Build a temp .ico from the bundled MacleayChef logo (icon.png).
+    Returns the path to the .ico, or None if the logo is missing / PIL fails."""
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image
         import tempfile
 
+        src = os.path.join(BASE_DIR, "icon.png")
+        if not os.path.isfile(src):
+            return None
+        master = Image.open(src).convert("RGBA")
+
         sizes = [16, 24, 32, 48, 64, 256]
-        frames = []
-        for sz in sizes:
-            img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
-            d = ImageDraw.Draw(img)
-            s = sz / 64  # scale relative to 64-px design grid
-
-            # Rounded-square background (app red)
-            bg_rad = max(2, int(sz * 0.20))
-            d.rounded_rectangle([0, 0, sz - 1, sz - 1], radius=bg_rad,
-                                 fill=(192, 57, 43, 255))
-
-            white = (255, 255, 255, 255)
-            red   = (192, 57, 43, 255)
-
-            # Pan body: wide shallow oval (side/angle view)
-            d.ellipse([2*s, 26*s, 38*s, 54*s], fill=white)
-
-            # Inner cooking-surface cutout
-            d.ellipse([5*s, 20*s, 35*s, 33*s], fill=red)
-
-            # Handle: tapered polygon angling to the upper-right
-            handle_pts = [
-                (34*s, 29*s),
-                (38*s, 35*s),
-                (61*s, 11*s),
-                (57*s,  6*s),
-            ]
-            d.polygon(handle_pts, fill=white)
-            d.ellipse([55*s, 5*s, 63*s, 12*s], fill=white)  # rounded grip cap
-
-            frames.append(img)
+        frames = [master.resize((sz, sz), Image.LANCZOS) for sz in sizes]
 
         tmp = tempfile.mktemp(suffix=".ico")
         frames[0].save(tmp, format="ICO",
@@ -443,7 +430,7 @@ def _set_taskbar_icon(hwnd: int, ico_path: str) -> None:
 def main() -> None:
     port = find_free_port()
 
-    # Generate the apple taskbar icon ahead of window creation
+    # Generate the app taskbar icon ahead of window creation
     icon_path = _generate_app_icon()
 
     # Start Flask in a daemon thread
@@ -456,7 +443,7 @@ def main() -> None:
         sys.exit(1)
 
     window = webview.create_window(
-        "Macleay Recipe Manager",
+        "MacleayChef",
         f"http://127.0.0.1:{port}",
         width=1280,
         height=860,

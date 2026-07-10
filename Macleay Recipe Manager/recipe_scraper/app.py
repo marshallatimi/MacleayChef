@@ -24,7 +24,7 @@ try:
 except ImportError:
     APP_VERSION = "dev"
 
-GITHUB_REPO = "marshallatimi/Macleay-Recipe-Manager"
+GITHUB_REPO = "marshallatimi/MacleayChef"
 
 # ── Path setup (works both in development and as a PyInstaller .exe) ──────────
 # BASE_DIR  = where the bundled files live (read-only when frozen)
@@ -1178,7 +1178,7 @@ def import_recipes_peek():
 
 
 def _parse_macleay_pdf_page(page_text: str) -> str:
-    """Parse one page of text extracted from a Macleay Recipe Manager printed PDF.
+    """Parse one page of text extracted from a MacleayChef printed PDF.
     Returns the page reformatted as a .txt-style recipe block that the text importer
     understands (Title / Servings: / Ingredients: / Instructions: sections).
     """
@@ -1275,7 +1275,7 @@ def _parse_macleay_pdf_page(page_text: str) -> str:
 
 @app.route("/recipes/import-pdf", methods=["POST"])
 def import_pdf_text():
-    """Upload a PDF printed from Macleay Recipe Manager, parse each page as a recipe,
+    """Upload a PDF printed from MacleayChef, parse each page as a recipe,
     and return the combined text in .txt import format."""
     import tempfile
     f = request.files.get("file")
@@ -2306,7 +2306,7 @@ def _urlopen_with_ssl_fallback(req, timeout=15):
 def api_check_update():
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-        req = urllib.request.Request(url, headers={"User-Agent": f"RecipeManager/{APP_VERSION}"})
+        req = urllib.request.Request(url, headers={"User-Agent": f"MacleayChef/{APP_VERSION}"})
         with _urlopen_with_ssl_fallback(req, timeout=15) as resp:
             data = json.loads(resp.read())
 
@@ -2360,11 +2360,11 @@ def api_download_update():
                     time.sleep(3)
                 req = urllib.request.Request(
                     download_url,
-                    headers={"User-Agent": f"RecipeManager/{APP_VERSION}"},
+                    headers={"User-Agent": f"MacleayChef/{APP_VERSION}"},
                 )
                 with _urlopen_with_ssl_fallback(req, timeout=60) as resp:
                     total     = int(resp.headers.get("Content-Length") or 0)
-                    tmp_path  = os.path.join(tempfile.gettempdir(), "MacleayRecipeManager-Update.exe")
+                    tmp_path  = os.path.join(tempfile.gettempdir(), "MacleayChef-Update.exe")
                     downloaded = 0
                     with open(tmp_path, "wb") as f:
                         while True:
@@ -2433,12 +2433,12 @@ def api_run_installer():
             # %ProgramW6432% (always the 64-bit Program Files even in WoW64/32-bit
             # wscript.exe, which is where Inno Setup actually installs on 64-bit OS).
             f.write('Dim exePath\r\n')
-            f.write('exePath = sh.ExpandEnvironmentStrings("%ProgramFiles%") & "\\Macleay Recipe Manager\\RecipeManager.exe"\r\n')
+            f.write('exePath = sh.ExpandEnvironmentStrings("%ProgramFiles%") & "\\MacleayChef\\RecipeManager.exe"\r\n')
             f.write('If NOT fso.FileExists(exePath) Then\r\n')
-            f.write('  exePath = sh.ExpandEnvironmentStrings("%ProgramW6432%") & "\\Macleay Recipe Manager\\RecipeManager.exe"\r\n')
+            f.write('  exePath = sh.ExpandEnvironmentStrings("%ProgramW6432%") & "\\MacleayChef\\RecipeManager.exe"\r\n')
             f.write('End If\r\n')
             f.write('If NOT fso.FileExists(exePath) Then\r\n')
-            f.write('  exePath = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\\Programs\\Macleay Recipe Manager\\RecipeManager.exe"\r\n')
+            f.write('  exePath = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\\Programs\\MacleayChef\\RecipeManager.exe"\r\n')
             f.write('End If\r\n')
             # Use Shell.Application.ShellExecute — this opens the exe via the
             # Explorer shell mechanism (same as double-clicking), giving it a clean
@@ -3043,7 +3043,7 @@ def _image_from_import(image_val):
     return image_val                        # external URL — keep as-is
 
 
-# ── Macleay Recipe Manager CSV (lossless round-trip) ──────────────────────────
+# ── MacleayChef CSV (lossless round-trip) ──────────────────────────
 # First row is a header containing "rm_version" in column 0.
 # This distinguishes it from AccuChef CSVs (which start with a blank row).
 _RM_CSV_HEADER = [
@@ -3054,7 +3054,7 @@ _RM_CSV_HEADER = [
 
 
 def export_cookbook_csv(cookbook_path):
-    """Export all recipes to a Recipe Manager CSV (full fidelity, lossless)."""
+    """Export all recipes to a MacleayChef CSV (full fidelity, lossless)."""
     conn = sqlite3.connect(cookbook_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM recipes ORDER BY title COLLATE NOCASE").fetchall()
@@ -3118,7 +3118,7 @@ def _read_csv_text(csv_path):
 
 
 def parse_rm_csv(csv_path):
-    """Parse a Recipe Manager CSV export — full fidelity."""
+    """Parse a MacleayChef CSV export — full fidelity."""
     recipes = []
     with io.StringIO(_read_csv_text(csv_path)) as f:
         reader = csv.DictReader(f)
