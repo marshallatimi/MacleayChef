@@ -10,7 +10,6 @@ import csv
 import io
 import base64
 import mimetypes
-import uuid
 import threading
 import tempfile
 import time
@@ -1318,25 +1317,6 @@ _MM_END_RE    = re.compile(r'^(?:M{5}|-{5,})\s*$', re.M)
 _MM_NUTRITION_RE = re.compile(
     r'^Per Serving\s*:|\d+\s*mg\s+(?:Sodium|Cholesterol|Calcium|Iron)\b|'
     r'\d+\s*g\s+(?:Protein|Tot(?:al)?\s+Fat|Sat Fat|Mono Fat|Carb|Fiber)\b', re.I)
-
-
-def _strip_rtf(text):
-    """Remove RTF markup that some exporters (notably AccuChef) embed inside
-    Meal-Master directions, e.g. {\\rtf1\\ansi...} wrappers, font/color
-    tables, and control words like \\par, \\cf1, \\fs20."""
-    if "\\" not in text and "{" not in text:
-        return text
-    # Drop font & color table groups entirely
-    text = re.sub(r'\{\\fonttbl.*?\}\}', ' ', text, flags=re.S)
-    text = re.sub(r'\{\\colortbl.*?\}', ' ', text, flags=re.S)
-    # Paragraph markers become newlines; then remove every control word,
-    # hex escape, and brace
-    text = re.sub(r'\\pard?\b', '\n', text)
-    text = re.sub(r"\\'[0-9a-fA-F]{2}", '', text)
-    text = re.sub(r'\\[a-zA-Z]+-?\d*\s?', ' ', text)
-    text = text.replace('{', ' ').replace('}', ' ')
-    lines = [re.sub(r'\s{2,}', ' ', l).strip() for l in text.split('\n')]
-    return "\n".join(l for l in lines if l)
 
 
 def _looks_like_mealmaster(text):
