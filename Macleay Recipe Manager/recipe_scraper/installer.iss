@@ -62,14 +62,25 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [Files]
 ; Main executable (produced by PyInstaller)
 Source: "dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; App icon (produced by generate_icon.py). Shortcuts reference this fresh file
+; path rather than the exe, so Windows never serves a stale cached icon after an
+; upgrade — the exe path is unchanged across updates and its icon gets cached.
+Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+; Remove leftover shortcuts from the pre-rebrand "Macleay Recipe Manager" name
+Type: files;          Name: "{commondesktop}\Macleay Recipe Manager.lnk"
+Type: files;          Name: "{userdesktop}\Macleay Recipe Manager.lnk"
+Type: filesandordirs; Name: "{commonprograms}\Macleay Recipe Manager"
+Type: filesandordirs; Name: "{userprograms}\Macleay Recipe Manager"
 
 [Icons]
 ; Start menu shortcut
-Name: "{group}\{#AppName}";       Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"
+Name: "{group}\{#AppName}";       Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\icon.ico"
 ; Start menu uninstall entry
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 ; Desktop shortcut (optional)
-Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 
 [UninstallDelete]
 ; Remove any temp files the app may leave in its install dir

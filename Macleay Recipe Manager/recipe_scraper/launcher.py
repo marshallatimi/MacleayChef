@@ -45,9 +45,6 @@ def _find_browser() -> str | None:
             return found
     return None
 
-# Keep old name as alias so existing call sites in _html_to_pdf still work
-def _find_edge() -> str:
-    return _find_browser() or "msedge"
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 if getattr(sys, "frozen", False):
