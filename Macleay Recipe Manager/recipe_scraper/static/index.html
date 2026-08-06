@@ -6032,14 +6032,21 @@ function toggleGmMeal(mealId) {
   const expanded = _gmExpandedMeals.has(mealId);
   if (hdr)  hdr.classList.toggle("open",  expanded);
   if (list) list.classList.toggle("open", expanded);
-  // When expanding, scroll the page down just enough to reveal the whole
-  // expansion if it runs past the bottom of the viewport
+  // When expanding, reveal the whole expansion. The meal list lives inside a
+  // max-height scroll container (.detail-scroll-list), so scroll THAT first,
+  // then the page if the container itself still runs past the viewport.
+  // Done synchronously — reading getBoundingClientRect flushes the layout from
+  // the display:none→block change, so measurements are already accurate.
   if (expanded && list) {
-    requestAnimationFrame(() => {
-      const rect = list.getBoundingClientRect();
-      const overflow = rect.bottom - window.innerHeight;
-      if (overflow > 0) window.scrollBy({ top: overflow + 16, behavior: "smooth" });
-    });
+    const block = list.closest(".gm-meal-block") || list;
+    const cont  = list.closest(".detail-scroll-list");
+    if (cont) {
+      const overflow = block.getBoundingClientRect().bottom - cont.getBoundingClientRect().bottom;
+      if (overflow > 0) cont.scrollTop += overflow + 12;
+    }
+    // Then reveal within the page if the container itself runs past the window
+    const pageOverflow = (cont || block).getBoundingClientRect().bottom - window.innerHeight;
+    if (pageOverflow > 0) window.scrollBy({ top: pageOverflow + 16, behavior: "smooth" });
   }
 }
 
@@ -6507,6 +6514,11 @@ async function updateGroupMealServings(slotOrMealId, val, useSlot) {
     ? (g.meals||[]).find(m => m.slot_id === slotOrMealId)
     : (g.meals||[]).find(m => m.id === slotOrMealId);
   if (m) m.servings = srv;
+  // Re-render so the row visibly reflects the change: a custom value shows the
+  // number; clearing it resets the display back to the group default (instead
+  // of leaving a stale placeholder with the old custom amount). Preserves
+  // scroll, search, and which meals are expanded.
+  renderGroupMealDetail();
   const url = useSlot
     ? `/group-meals/${g.id}/slots/${slotOrMealId}`
     : `/group-meals/${g.id}/meals/${slotOrMealId}`;
@@ -6514,20 +6526,6 @@ async function updateGroupMealServings(slotOrMealId, val, useSlot) {
     method:"PATCH", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({servings: srv})
   });
-  // Refresh recipe-level placeholders for this meal (reflect new meal default)
-  if (m) {
-    const full = savedMeals.find(sm => sm.id === m.id);
-    if (full) {
-      (full.recipes||[]).forEach(r => {
-        const slotKey2 = m.slot_id != null ? m.slot_id : m.id;
-        const inp = document.querySelector(`#gm-rlist-${slotKey2} .gm-recipe-row input[onchange*="${r.id}"]`);
-        if (inp && (inp.value === "" || inp.value == null)) {
-          const effBase = srv != null ? srv : (g.default_servings != null ? g.default_servings : null);
-          inp.placeholder = effBase != null ? `Meal default (${effBase})` : "Servings…";
-        }
-      });
-    }
-  }
 }
 
 async function updateGroupRecipeServings(slotOrMealId, recipeId, val, useSlot) {
@@ -6543,6 +6541,9 @@ async function updateGroupRecipeServings(slotOrMealId, recipeId, val, useSlot) {
   const srv = (val !== "" && val != null && !isNaN(parsed) && parsed >= 0) ? parsed : null;
   if (srv != null) m.recipe_servings[recipeId] = srv;
   else delete m.recipe_servings[recipeId];
+  // Re-render so clearing a recipe's custom serving resets its display to the
+  // meal/group default rather than showing a stale value.
+  renderGroupMealDetail();
   const url = useSlot
     ? `/group-meals/${g.id}/slots/${slotOrMealId}`
     : `/group-meals/${g.id}/meals/${slotOrMealId}`;
