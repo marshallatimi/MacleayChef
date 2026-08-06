@@ -14,6 +14,11 @@
       --header-bg: #c0392b;
     }
 
+    /* Hide the up/down spinner arrows on all number inputs (servings, etc.) */
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
     [data-theme="dark"] {
       --bg: #1c1c1e; --card: #2c2c2e; --border: #3a3a3c;
       --text: #f0f0f0; --muted: #ababab; --header-bg: #7b1e1e;
@@ -377,6 +382,12 @@
     .shop-search-bar { display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin-bottom:0.7rem; }
     .shop-search-bar input { flex:1; min-width:180px; padding:0.55rem 0.8rem; border:2px solid var(--border); border-radius:7px; font-size:0.9rem; outline:none; font-family:inherit; background: var(--card); color: var(--text); }
     .shop-search-bar input:focus { border-color:var(--red); }
+    .gm-is-hidden { opacity:0.6; }
+    /* Clear-X inside a search field */
+    .search-clear-wrap { position:relative; flex:1; min-width:180px; display:flex; }
+    .search-clear-wrap input { flex:1; min-width:0; padding-right:2rem; }
+    .search-clear-btn { position:absolute; right:0.5rem; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); font-size:1.1rem; line-height:1; cursor:pointer; padding:0.15rem 0.25rem; border-radius:50%; }
+    .search-clear-btn:hover { color:var(--red); background:var(--bg); }
     .shop-search-bar select { padding:0.55rem 0.7rem; border:2px solid var(--border); border-radius:7px; font-size:0.88rem; font-family:inherit; background:var(--card); color:var(--text); outline:none; }
     .shop-search-bar select:focus { border-color:var(--red); }
 
@@ -675,6 +686,7 @@
           </div>
         </div>
       </div>
+      <button id="gm-show-hidden-btn" class="btn btn-ghost" style="font-size:0.82rem" onclick="toggleGmShowHidden()" title="Show or hide hidden group meals">👁 Show hidden</button>
       <button class="btn btn-primary" onclick="createGroupMeal()">+ New Group Meal</button>
     </div>
     <div id="groupmeal-grid" class="recipe-grid"></div>
@@ -5846,21 +5858,38 @@ async function initGroupMealTab() {
   renderGroupMealList();
 }
 
-// "11 meals, 9 recipes" label for group meal cards (section headers excluded)
-function _gmCountLabel(g) {
-  const slots = g.meals || [];
-  const nM = slots.filter(s => s.type === "meal").length;
-  const nR = slots.filter(s => s.type === "recipe").length;
-  const parts = [];
-  if (nM || !nR) parts.push(`${nM} meal${nM !== 1 ? "s" : ""}`);
-  if (nR) parts.push(`${nR} recipe${nR !== 1 ? "s" : ""}`);
-  return parts.join(", ");
+let _gmShowHidden = false;
+
+function toggleGmShowHidden() {
+  _gmShowHidden = !_gmShowHidden;
+  const btn = document.getElementById("gm-show-hidden-btn");
+  if (btn) {
+    btn.textContent = _gmShowHidden ? "🙈 Hide hidden" : "👁 Show hidden";
+    btn.classList.toggle("btn-primary", _gmShowHidden);
+    btn.classList.toggle("btn-ghost", !_gmShowHidden);
+  }
+  renderGroupMealList();
+}
+
+async function setGroupMealHidden(gid, hidden, e) {
+  if (e) e.stopPropagation();
+  const g = savedGroupMeals.find(x => x.id === gid);
+  if (g) g.hidden = hidden ? 1 : 0;
+  renderGroupMealList();
+  await fetch(`/group-meals/${gid}`, {
+    method:"PUT", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({hidden: !!hidden})
+  });
+  showToast(hidden ? "Group meal hidden" : "Group meal shown");
 }
 
 function renderGroupMealList() {
   const container = document.getElementById("groupmeal-grid");
   const gmSearch = (document.getElementById("gm-list-search")?.value || "").toLowerCase().trim();
+  const hiddenCount = savedGroupMeals.filter(g => g.hidden).length;
   const gmFiltered = savedGroupMeals.filter(g => {
+    // Hidden group meals only show when "Show hidden" is on
+    if (g.hidden && !_gmShowHidden) return false;
     if (gmSearch && !g.name.toLowerCase().includes(gmSearch)) return false;
     if (_gmActiveCatFilters.size) {
       const gCats = g.categories && g.categories.length ? g.categories : (g.category ? [g.category] : []);
@@ -5868,21 +5897,30 @@ function renderGroupMealList() {
     }
     return true;
   });
+  // Keep the Show-hidden button in sync (and hide it entirely if nothing's hidden)
+  const shBtn = document.getElementById("gm-show-hidden-btn");
+  if (shBtn) shBtn.hidden = hiddenCount === 0 && !_gmShowHidden;
   if (!gmFiltered.length) {
     container.className = "recipe-grid";
     container.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:3rem 0;color:var(--muted)">${savedGroupMeals.length ? "No group meals match your search." : "No group meals yet. Click <strong>+ New Group Meal</strong> to create one."}</div>`;
     return;
   }
+  const hideBtn = g => {
+    const isHidden = !!g.hidden;
+    const icon = isHidden ? "👁" : "🙈";
+    const label = isHidden ? "Show" : "Hide";
+    return `<button class="grid-card-hide" onclick="setGroupMealHidden(${g.id}, ${isHidden ? "false" : "true"}, event)" title="${label} group meal" style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:50%;width:26px;height:26px;font-size:0.85rem;cursor:pointer;z-index:4;line-height:1">${icon}</button>`;
+  };
   const mode = appSettings.viewMode || "grid";
   if (mode === "list") {
     container.className = "list-view";
     container.innerHTML = gmFiltered.map(g => {
-      return `<div class="list-card" onclick="openGroupMeal(${g.id})">
+      return `<div class="list-card${g.hidden ? " gm-is-hidden" : ""}" onclick="openGroupMeal(${g.id})">
         ${g.image ? `<img class="list-thumb" src="${esc(g.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍴</div>`}
         <div class="list-info">
-          <div class="list-title">${esc(g.name)}</div>
-          <div class="list-meta">${_gmCountLabel(g)}</div>
+          <div class="list-title">${esc(g.name)}${g.hidden ? ` <span style="font-size:0.7rem;color:var(--muted);font-weight:400">(hidden)</span>` : ""}</div>
         </div>
+        <button class="list-del" onclick="setGroupMealHidden(${g.id}, ${g.hidden ? "false" : "true"}, event)" title="${g.hidden ? "Show" : "Hide"}" style="margin-right:0.2rem">${g.hidden ? "👁" : "🙈"}</button>
         <button class="list-del" onclick="(async(e)=>{e.stopPropagation();await deleteGroupMealById(${g.id})})(event)" title="Delete">✕</button>
       </div>`;
     }).join("");
@@ -5890,14 +5928,14 @@ function renderGroupMealList() {
     container.className = "recipe-grid";
     container.innerHTML = gmFiltered.map(g => {
       const gmThumbHtml = g.image
-        ? `<img src="${esc(g.image)}" alt="${esc(g.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
-        : `<div class="grid-card-img-placeholder">🍴</div>`;
-      return `<div class="grid-card" onclick="openGroupMeal(${g.id})">
+        ? `<img src="${esc(g.image)}" alt="${esc(g.name)}" loading="lazy" style="width:100%;height:110px;object-fit:cover;display:block"/>`
+        : `<div class="grid-card-img-placeholder" style="height:110px">🍴</div>`;
+      return `<div class="grid-card${g.hidden ? " gm-is-hidden" : ""}" onclick="openGroupMeal(${g.id})">
         <button class="grid-card-del" onclick="(async(e)=>{e.stopPropagation();await deleteGroupMealById(${g.id})})(event)" title="Delete">✕</button>
+        ${hideBtn(g)}
         ${gmThumbHtml}
-        <div class="grid-card-body">
-          <div class="grid-card-title">${esc(g.name)}</div>
-          <div class="grid-card-meta">${_gmCountLabel(g)}</div>
+        <div class="grid-card-body" style="padding-top:0.5rem;padding-bottom:0.5rem">
+          <div class="grid-card-title">${esc(g.name)}${g.hidden ? ` <span style="font-size:0.7rem;color:var(--muted);font-weight:400">(hidden)</span>` : ""}</div>
         </div>
       </div>`;
     }).join("");
@@ -5991,8 +6029,34 @@ function toggleGmMeal(mealId) {
   else _gmExpandedMeals.add(mealId);
   const hdr  = document.getElementById(`gm-mhdr-${mealId}`);
   const list = document.getElementById(`gm-rlist-${mealId}`);
-  if (hdr)  hdr.classList.toggle("open",  _gmExpandedMeals.has(mealId));
-  if (list) list.classList.toggle("open", _gmExpandedMeals.has(mealId));
+  const expanded = _gmExpandedMeals.has(mealId);
+  if (hdr)  hdr.classList.toggle("open",  expanded);
+  if (list) list.classList.toggle("open", expanded);
+  // When expanding, scroll the page down just enough to reveal the whole
+  // expansion if it runs past the bottom of the viewport
+  if (expanded && list) {
+    requestAnimationFrame(() => {
+      const rect = list.getBoundingClientRect();
+      const overflow = rect.bottom - window.innerHeight;
+      if (overflow > 0) window.scrollBy({ top: overflow + 16, behavior: "smooth" });
+    });
+  }
+}
+
+// Clear-X handling for the group meal Add-Meal / Add-Recipe search fields
+function _gmToggleClear(inputId) {
+  const inp = document.getElementById(inputId);
+  const btn = document.getElementById(inputId + "-clear");
+  if (inp && btn) btn.hidden = !inp.value;
+}
+
+function _gmClearSearch(inputId, kind) {
+  const inp = document.getElementById(inputId);
+  if (inp) inp.value = "";
+  _gmToggleClear(inputId);
+  if (kind === "meal") renderGroupMealBrowser();
+  else renderGroupMealRecipeBrowser();
+  if (inp) inp.focus();
 }
 
 async function moveGroupMealSlot(slotId, direction) {
@@ -6255,14 +6319,22 @@ function renderGroupMealDetail() {
           ${_gmMealCategoryOptions()}
         </select>
         <div class="shop-search-bar" style="margin-bottom:0.5rem">
-          <input type="text" id="gm-meal-search" placeholder="Search meals…" oninput="renderGroupMealBrowser()"/>
+          <div class="search-clear-wrap">
+            <input type="text" id="gm-meal-search" placeholder="Search meals…" oninput="_gmToggleClear('gm-meal-search');renderGroupMealBrowser()"/>
+            <button type="button" class="search-clear-btn" id="gm-meal-search-clear" hidden
+              onclick="_gmClearSearch('gm-meal-search','meal')" title="Clear search">✕</button>
+          </div>
         </div>
         <div id="gm-meal-browser" class="shop-browser" style="max-height:240px"></div>
       </div>` : ""}
       ${savedRecipes.length ? `<div style="flex:1;min-width:220px">
         <div class="section-title" style="margin-bottom:0.5rem">Add Recipe</div>
         <div class="shop-search-bar" style="margin-bottom:0.5rem">
-          <input type="text" id="gm-recipe-search" placeholder="Search recipes…" oninput="renderGroupMealRecipeBrowser()"/>
+          <div class="search-clear-wrap">
+            <input type="text" id="gm-recipe-search" placeholder="Search recipes…" oninput="_gmToggleClear('gm-recipe-search');renderGroupMealRecipeBrowser()"/>
+            <button type="button" class="search-clear-btn" id="gm-recipe-search-clear" hidden
+              onclick="_gmClearSearch('gm-recipe-search','recipe')" title="Clear search">✕</button>
+          </div>
         </div>
         <div id="gm-recipe-browser" class="shop-browser" style="max-height:240px"></div>
       </div>` : ""}
@@ -6312,6 +6384,8 @@ function renderGroupMealDetail() {
   if (_ms && _keepMealSearch) _ms.value = _keepMealSearch;
   const _rs = document.getElementById("gm-recipe-search");
   if (_rs && _keepRecipeSearch) _rs.value = _keepRecipeSearch;
+  _gmToggleClear("gm-meal-search");
+  _gmToggleClear("gm-recipe-search");
   // expand/collapse is now wired via inline onclick on .gm-meal-header
   if (available.length) renderGroupMealBrowser();
   if (savedRecipes.length) renderGroupMealRecipeBrowser();
@@ -6413,16 +6487,13 @@ async function updateGroupDefaultServings(val) {
   if (!g) return;
   const ds = val && parseFloat(val) > 0 ? parseFloat(val) : null;
   g.default_servings = ds;
+  // Re-render so every meal/recipe that hasn't been manually overridden
+  // instantly shows the new default; overridden rows keep their own value.
+  // (renderGroupMealDetail preserves page scroll, list scroll, and search text.)
+  renderGroupMealDetail();
   await fetch(`/group-meals/${g.id}`, {
     method:"PUT", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({name: g.name, default_servings: ds})
-  });
-  // Refresh placeholder text on per-meal inputs without full re-render
-  (g.meals||[]).forEach(m => {
-    if (m.servings == null) {
-      const row = document.querySelector(`#gm-meal-list .meal-recipe-row:nth-child(${(g.meals.indexOf(m)+1)}) input[type=number]`);
-      if (row) row.placeholder = ds != null ? `Default (${ds})` : "Servings…";
-    }
   });
 }
 

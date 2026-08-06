@@ -366,7 +366,8 @@ def init_db():
                 created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        for col in ["default_servings REAL DEFAULT NULL", "image TEXT DEFAULT NULL"]:
+        for col in ["default_servings REAL DEFAULT NULL", "image TEXT DEFAULT NULL",
+                    "hidden INTEGER DEFAULT 0"]:
             try: conn.execute(f"ALTER TABLE group_meals ADD COLUMN {col}")
             except Exception: pass
         # group_meal_members – must allow the same meal multiple times in one group.
@@ -2052,10 +2053,21 @@ def create_group_meal():
 def update_group_meal(gid):
     data = request.get_json()
     db = get_db()
+    # Partial update: only "hidden" was sent (hide/show toggle) — don't touch
+    # name or default_servings.
+    if "hidden" in data and "name" not in data:
+        db.execute("UPDATE group_meals SET hidden=? WHERE id=?",
+                   (1 if data.get("hidden") else 0, gid))
+        db.commit()
+        return jsonify({"ok": True})
     ds = data.get("default_servings")
     ds = float(ds) if ds not in (None, "", "null") else None
-    db.execute("UPDATE group_meals SET name=?, default_servings=? WHERE id=?",
-               (data.get("name"), ds, gid))
+    if "hidden" in data:
+        db.execute("UPDATE group_meals SET name=?, default_servings=?, hidden=? WHERE id=?",
+                   (data.get("name"), ds, 1 if data.get("hidden") else 0, gid))
+    else:
+        db.execute("UPDATE group_meals SET name=?, default_servings=? WHERE id=?",
+                   (data.get("name"), ds, gid))
     db.commit()
     return jsonify({"ok": True})
 

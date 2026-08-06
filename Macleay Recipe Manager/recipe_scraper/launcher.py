@@ -179,18 +179,15 @@ class FileApi:
         webbrowser.open(url)
 
     def save_pdf_folder(self, pdfs, folder_name):
-        """Ask the user for a parent folder, create a subfolder named after the
-        group meal, then render each {filename, html} entry as a separate PDF."""
-        safe_folder = self._safe_filename(folder_name) or "Group Export"
-
+        """Ask the user for a folder, then render each {filename, html} entry as
+        a separate PDF directly into that folder (no subfolder is created)."""
         result = webview.windows[0].create_file_dialog(webview.FOLDER_DIALOG)
         if not result:
             return {"ok": False, "msg": "Cancelled"}
-        parent_dir = result[0] if isinstance(result, (list, tuple)) else result
-        if not parent_dir:
+        out_dir = result[0] if isinstance(result, (list, tuple)) else result
+        if not out_dir:
             return {"ok": False, "msg": "Cancelled"}
 
-        out_dir = os.path.join(parent_dir, safe_folder)
         os.makedirs(out_dir, exist_ok=True)
 
         saved = []
