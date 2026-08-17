@@ -103,7 +103,9 @@ def wait_for_server(port: int, timeout: float = 10.0) -> bool:
 def run_server(port: int) -> None:
     flask_app.startup()
     from werkzeug.serving import make_server
-    server = make_server("127.0.0.1", port, flask_app.app)
+    # threaded=True so concurrent requests (e.g. many lazy grid thumbnails)
+    # are served in parallel instead of being connection-refused.
+    server = make_server("127.0.0.1", port, flask_app.app, threaded=True)
     server.serve_forever()
 
 

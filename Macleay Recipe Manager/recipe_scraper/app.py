@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory, g, Response
+from flask import Flask, request, jsonify, send_from_directory, g, Response, redirect
 from recipe_scrapers import scrape_me
 import sqlite3
 import json
@@ -965,15 +965,38 @@ def scrape():
 @app.route("/recipes", methods=["GET"])
 def list_recipes():
     # Exclude the image column — base64 images can be hundreds of KB each.
-    # The full image is fetched individually when a recipe is opened.
+    # A lightweight has_image flag lets the grid show a thumbnail (loaded
+    # lazily via /recipes/<id>/image-raw) only for recipes that have one.
     rows = get_db().execute(
         "SELECT id,title,servings,servings_num,"
         "ingredient_groups,instruction_groups,total_time,site_name,source_url,"
         "category,categories,notes,view_count,created_at,updated_at,base_recipe,scale_by_batch,"
-        "directions_text,collection_id"
+        "directions_text,collection_id,"
+        "(image IS NOT NULL AND image != '') AS has_image"
         " FROM recipes ORDER BY created_at DESC"
     ).fetchall()
     return jsonify([row_to_dict(r) for r in rows])
+
+
+@app.route("/recipes/<int:rid>/image-raw")
+def recipe_image_raw(rid):
+    """Serve a recipe's image as real bytes (for lazy grid thumbnails).
+    Images are stored as data URIs; decode and return them with the right
+    content-type. Plain URLs are redirected to."""
+    row = get_db().execute("SELECT image FROM recipes WHERE id=?", (rid,)).fetchone()
+    img = row["image"] if row else None
+    if not img:
+        return ("", 404)
+    m = re.match(r"data:([^;]+);base64,(.*)$", img, re.S)
+    if m:
+        try:
+            data = base64.b64decode(m.group(2))
+            return Response(data, mimetype=m.group(1),
+                            headers={"Cache-Control": "no-cache"})
+        except Exception:
+            return ("", 404)
+    # Non-data-URI (external URL or legacy path) — redirect the browser to it
+    return redirect(img)
 
 
 # ── Collections (higher-level grouping above category tags) ────────────────────
@@ -3892,4 +3915,6 @@ def export_cookbook_route():
 if __name__ == "__main__":
     os.makedirs(os.path.join(BASE_DIR, "static"), exist_ok=True)
     startup()
-    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
+    # threaded=True so concurrent requests (e.g. many lazy grid thumbnails)
+    # don't get connection-refused by a single-threaded server.
+    app.run(debug=True, port=int(os.environ.get("PORT", 5000)), threaded=True)

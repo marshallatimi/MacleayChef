@@ -140,7 +140,7 @@
     .about-box h3 { font-size: 1.2rem; margin-bottom: 0.3rem; }
     .about-box p { font-size: 0.85rem; color: var(--muted); }
 
-    .recipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(140px,18vw,195px),1fr)); gap: clamp(0.5rem,1.5vw,1rem); }
+    .recipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(140px,18vw,195px),1fr)); gap: clamp(0.5rem,1.5vw,1rem); align-items: start; }
     /* ── List-view alternative ─────────────────────────────────── */
     .list-view { display: flex; flex-direction: column; gap: 0.35rem; }
     .list-card { display: flex; align-items: center; gap: 0.75rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; transition: background 0.12s, box-shadow 0.12s; position: relative; }
@@ -281,6 +281,9 @@
     .grid-card:hover .grid-card-del { opacity:1; }
     .grid-card-del:hover { background:var(--red) !important; }
     .grid-card-body { padding:0.8rem; }
+    /* No-image cards: reserve a little top space so the corner controls
+       (delete ✕, hide 👁, bulk checkmark) don't overlap the title. */
+    .grid-card.no-img .grid-card-body { padding-top:2.1rem; }
     .grid-card-title { font-weight:700; font-size:0.95rem; line-height:1.3; margin-bottom:0.3rem; }
     .grid-card-meta { font-size:0.78rem; color:var(--muted); }
 
@@ -1693,6 +1696,16 @@ function _recipeCollName(r) {
   return c ? c.name : "";
 }
 
+// Thumbnail src for a recipe card, or null if it has no image.
+// The list endpoint omits image data (only a has_image flag), so we load the
+// image lazily from /recipes/<id>/image-raw. If the recipe object already
+// carries a full image (e.g. just after editing), use that directly.
+function _recipeThumbSrc(r) {
+  if (r.image) return r.image;                 // full data URI present
+  if (r.image === undefined && r.has_image) return `/recipes/${r.id}/image-raw`;
+  return null;                                  // no image (or explicitly removed)
+}
+
 function renderGrid() {
   const container = document.getElementById("recipe-grid");
   const list = getSortedRecipes();
@@ -1712,12 +1725,13 @@ function renderGrid() {
     container.innerHTML = list.map(r => {
       const cats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
       const collNm = _recipeCollName(r);
+      const thumb = _recipeThumbSrc(r);
       const meta = [fmtServings(r.servings), cats.join(", ")].filter(Boolean).join(" · ");
       const sel = _bulkSelected.has(r.id);
       const onclick = bulk ? `toggleBulkSelect(${r.id})` : `openRecipe(${r.id})`;
       return `<div class="list-card${bulk ? " bulk" : ""}${bulk && sel ? " sel" : ""}" onclick="${onclick}">
         ${bulk ? `<div class="bulk-check">${sel ? "✓" : ""}</div>` : ""}
-        ${r.image ? `<img class="list-thumb" src="${esc(r.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍽️</div>`}
+        ${thumb ? `<img class="list-thumb" src="${esc(thumb)}" loading="lazy"/>` : ""}
         <div class="list-info">
           <div class="list-title">${esc(r.title)}${collNm ? ` <span class="recipe-coll-badge" style="margin-top:0">🗂️ ${esc(collNm)}</span>` : ""}</div>
           ${meta ? `<div class="list-meta">${esc(meta)}</div>` : ""}
@@ -1730,12 +1744,13 @@ function renderGrid() {
     container.innerHTML = list.map(r => {
       const sel = _bulkSelected.has(r.id);
       const onclick = bulk ? `toggleBulkSelect(${r.id})` : `openRecipe(${r.id})`;
+      const thumb = _recipeThumbSrc(r);
       return `
-      <div class="grid-card${bulk ? " bulk" : ""}${bulk && sel ? " sel" : ""}" onclick="${onclick}">
+      <div class="grid-card${bulk ? " bulk" : ""}${bulk && sel ? " sel" : ""}${thumb ? "" : " no-img"}" onclick="${onclick}">
         ${bulk
           ? `<div class="bulk-check">${sel ? "✓" : ""}</div>`
           : `<button class="grid-card-del" onclick="deleteRecipeById(${r.id},event)" title="Delete">✕</button>`}
-        ${r.image ? `<img src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy"/>` : `<div class="grid-card-img-placeholder">🍽️</div>`}
+        ${thumb ? `<img src="${esc(thumb)}" alt="${esc(r.title)}" loading="lazy"/>` : ""}
         <div class="grid-card-body">
           <div class="grid-card-title">${esc(r.title)}</div>
           ${_recipeCollName(r) ? `<div><span class="recipe-coll-badge">🗂️ ${esc(_recipeCollName(r))}</span></div>` : ""}
@@ -1860,17 +1875,31 @@ async function bulkDelete() {
 
 let _savedListScrollY = 0;
 
-function openRecipe(id) {
+async function openRecipe(id) {
   _savedListScrollY = window.scrollY;          // remember position before leaving the list
   selectedRecipe = savedRecipes.find(r => r.id === id);
   if (!selectedRecipe) return;
   _recipeHistory = [];
-  _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
   document.getElementById("saved-list-view").hidden = true;
   document.getElementById("saved-detail-view").hidden = false;
   window.scrollTo(0, 0);                       // start recipe detail at the top
+  // The recipe list omits image data — fetch the full record so the photo
+  // shows AND so saving an edit doesn't blank the image (the PUT resends the
+  // whole recipe). Render once immediately for responsiveness, then again
+  // with the full data.
+  _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
   renderSavedDetail();
-  selectedRecipe.view_count = (selectedRecipe.view_count || 0) + 1;
+  try {
+    const full = await (await fetch(`/recipes/${id}`)).json();
+    if (selectedRecipe && selectedRecipe.id === id) {
+      selectedRecipe = full;
+      _prevRecipeState = JSON.parse(JSON.stringify(selectedRecipe));
+      renderSavedDetail();
+    }
+  } catch {}
+  if (selectedRecipe && selectedRecipe.id === id) {
+    selectedRecipe.view_count = (selectedRecipe.view_count || 0) + 1;
+  }
   fetch(`/recipes/${id}/view`, {method:"POST"});
 }
 
@@ -5078,7 +5107,7 @@ function renderMealGrid() {
       const cats = (m.categories && m.categories.length ? m.categories : (m.category ? [m.category] : []));
       const meta = [`${m.recipes.length} recipe${m.recipes.length===1?"":"s"}`, cats.join(", ")].filter(Boolean).join(" · ");
       return `<div class="list-card" onclick="openMeal(${m.id})">
-        ${thumbSrc ? `<img class="list-thumb" src="${esc(thumbSrc)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍽️</div>`}
+        ${thumbSrc ? `<img class="list-thumb" src="${esc(thumbSrc)}" loading="lazy"/>` : ""}
         <div class="list-info">
           <div class="list-title">${esc(m.name)}</div>
           ${meta ? `<div class="list-meta">${esc(meta)}</div>` : ""}
@@ -5092,10 +5121,10 @@ function renderMealGrid() {
       const thumbSrc = m.image || (m.recipes.find(r => r.image) || {}).image || null;
       const thumbHtml = thumbSrc
         ? `<img src="${esc(thumbSrc)}" alt="${esc(m.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
-        : `<div class="grid-card-img-placeholder">🍽️</div>`;
+        : "";
       const badges = m.recipes.slice(0,3).map(r => `<span class="grid-cat-badge">${esc(r.title)}</span>`).join(" ");
       const more = m.recipes.length > 3 ? ` <span class="grid-cat-badge">+${m.recipes.length-3} more</span>` : "";
-      return `<div class="grid-card" onclick="openMeal(${m.id})">
+      return `<div class="grid-card${thumbSrc ? "" : " no-img"}" onclick="openMeal(${m.id})">
         <button class="grid-card-del" onclick="deleteMealById(${m.id},event)" title="Delete">✕</button>
         ${thumbHtml}
         <div class="grid-card-body">
@@ -6308,7 +6337,7 @@ function renderGroupMealList() {
     container.className = "list-view";
     container.innerHTML = gmFiltered.map(g => {
       return `<div class="list-card${g.hidden ? " gm-is-hidden" : ""}" onclick="openGroupMeal(${g.id})">
-        ${g.image ? `<img class="list-thumb" src="${esc(g.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍴</div>`}
+        ${g.image ? `<img class="list-thumb" src="${esc(g.image)}" loading="lazy"/>` : ""}
         <div class="list-info">
           <div class="list-title">${esc(g.name)}${g.hidden ? ` <span style="font-size:0.7rem;color:var(--muted);font-weight:400">(hidden)</span>` : ""}</div>
         </div>
@@ -6321,12 +6350,12 @@ function renderGroupMealList() {
     container.innerHTML = gmFiltered.map(g => {
       const gmThumbHtml = g.image
         ? `<img src="${esc(g.image)}" alt="${esc(g.name)}" loading="lazy" style="width:100%;height:110px;object-fit:cover;display:block"/>`
-        : `<div class="grid-card-img-placeholder" style="height:110px">🍴</div>`;
-      return `<div class="grid-card${g.hidden ? " gm-is-hidden" : ""}" onclick="openGroupMeal(${g.id})">
+        : "";
+      return `<div class="grid-card${g.hidden ? " gm-is-hidden" : ""}${g.image ? "" : " no-img"}" onclick="openGroupMeal(${g.id})">
         <button class="grid-card-del" onclick="(async(e)=>{e.stopPropagation();await deleteGroupMealById(${g.id})})(event)" title="Delete">✕</button>
         ${hideBtn(g)}
         ${gmThumbHtml}
-        <div class="grid-card-body" style="padding-top:0.5rem;padding-bottom:0.5rem">
+        <div class="grid-card-body" style="padding-top:${g.image ? "0.5rem" : "2.1rem"};padding-bottom:0.5rem">
           <div class="grid-card-title">${esc(g.name)}${g.hidden ? ` <span style="font-size:0.7rem;color:var(--muted);font-weight:400">(hidden)</span>` : ""}</div>
         </div>
       </div>`;
