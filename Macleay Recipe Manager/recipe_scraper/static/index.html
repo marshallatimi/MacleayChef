@@ -383,6 +383,24 @@
     .shop-search-bar input { flex:1; min-width:180px; padding:0.55rem 0.8rem; border:2px solid var(--border); border-radius:7px; font-size:0.9rem; outline:none; font-family:inherit; background: var(--card); color: var(--text); }
     .shop-search-bar input:focus { border-color:var(--red); }
     .gm-is-hidden { opacity:0.6; }
+
+    /* ── Collections (higher-level grouping above category tags) ── */
+    .collections-bar { display:flex; flex-wrap:wrap; align-items:center; gap:0.4rem; margin-bottom:0.9rem; }
+    .collections-bar:empty { display:none; }
+    .coll-chip { display:inline-flex; align-items:center; gap:0.35rem; padding:0.28rem 0.7rem; border:1.5px solid var(--border); border-radius:999px; background:var(--card); color:var(--text); font-size:0.82rem; font-weight:600; cursor:pointer; transition:all 0.12s; white-space:nowrap; user-select:none; }
+    .coll-chip:hover { border-color:var(--red); }
+    .coll-chip.active { background:var(--red); border-color:var(--red); color:#fff; }
+    .coll-chip.active .coll-chip-count { background:rgba(255,255,255,0.28); color:#fff; }
+    .coll-chip .coll-chip-count { background:var(--bg); color:var(--muted); border-radius:999px; padding:0 0.4rem; font-size:0.72rem; font-weight:700; }
+    .coll-chip.off { opacity:0.5; }
+    .coll-chip.off .coll-chip-eye { opacity:0.6; }
+    .coll-bar-label { font-size:0.78rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-right:0.15rem; }
+    .coll-bar-btn { background:none; border:1.5px solid var(--border); border-radius:999px; padding:0.28rem 0.7rem; font-size:0.8rem; color:var(--muted); cursor:pointer; font-family:inherit; }
+    .coll-bar-btn:hover { border-color:var(--red); color:var(--red); }
+    .coll-manage-row { display:flex; align-items:center; gap:0.5rem; padding:0.5rem 0; border-bottom:1px solid var(--border); }
+    .coll-manage-row:last-child { border-bottom:none; }
+    .coll-manage-name { flex:1; font-size:0.9rem; font-weight:600; }
+    .coll-swatch { width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid var(--border); }
     /* Clear-X inside a search field */
     .search-clear-wrap { position:relative; flex:1; min-width:180px; display:flex; }
     .search-clear-wrap input { flex:1; min-width:0; padding-right:2rem; }
@@ -546,6 +564,7 @@
 
 <div id="tab-saved" class="page" hidden>
   <div id="saved-list-view">
+    <div id="collections-bar" class="collections-bar"></div>
     <div class="grid-controls">
       <div class="grid-controls-left">
         <input class="grid-search-input" id="recipe-search-input" type="search"
@@ -929,6 +948,26 @@
   </div>
 </div>
 
+<!-- Manage Collections Modal -->
+<div id="collections-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeManageCollections(event)">
+  <div class="img-modal" style="width:min(480px,95vw);max-height:90vh;overflow-y:auto" onclick="event.stopPropagation()">
+    <h3>🗂️ Manage Collections</h3>
+    <p style="font-size:0.84rem;color:var(--muted);margin-bottom:0.9rem">
+      Collections are a higher level than category tags — use them to separate recipes
+      into groups (e.g. different sides of a business, or an archive). Each recipe belongs
+      to one collection.
+    </p>
+    <div id="coll-manage-list" style="margin-bottom:1rem"></div>
+    <div style="display:flex;gap:0.5rem;align-items:center">
+      <input type="text" id="coll-new-name" class="prompt-modal-input" placeholder="New collection name…" style="margin-bottom:0;flex:1"/>
+      <button class="btn btn-primary" onclick="createCollectionUI()">Add</button>
+    </div>
+    <div class="img-modal-btns" style="margin-top:1.2rem">
+      <button class="btn btn-ghost" onclick="closeManageCollections()">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- Custom Prompt Modal (replaces browser prompt()) -->
 <div id="prompt-modal-backdrop" class="img-modal-backdrop" hidden>
   <div class="img-modal" onclick="event.stopPropagation()" style="width:min(420px,92vw)">
@@ -1287,12 +1326,208 @@ async function loadSavedRecipes() {
     const sortSel = document.getElementById("sort-select");
     if (sortSel) sortSel.value = currentSort;
     updateCatFilter();
+    await loadCollections(); // load collections + restore this cookbook's view
     renderGrid();
   } catch { grid.innerHTML = "<p style='color:var(--red)'>Failed to load recipes.</p>"; }
 }
 
 function updateCatFilter() {
   // No-op: category filter is now a multi-select dropdown; renderCatFilterOptions() handles populating it
+}
+
+// ══════════════════════════════════════════════════════════════
+// Collections (higher-level grouping above category tags)
+// ══════════════════════════════════════════════════════════════
+let savedCollections = [];
+// Tokens (collection id as string, or "uncat") whose recipes are hidden from
+// the grid. This VIEW state is per-computer (localStorage), keyed per cookbook,
+// so each machine remembers its own view. The collections themselves and the
+// recipe→collection assignments live in the cookbook and are shared.
+let _hiddenColls = new Set();
+
+function _collVisKey() {
+  const name = document.getElementById("cookbook-name-display")?.textContent || "default";
+  return "collVis:" + name;
+}
+function _loadCollVis() {
+  try {
+    const raw = localStorage.getItem(_collVisKey());
+    _hiddenColls = new Set(raw ? JSON.parse(raw) : []);
+  } catch { _hiddenColls = new Set(); }
+}
+function _saveCollVis() {
+  try { localStorage.setItem(_collVisKey(), JSON.stringify([..._hiddenColls])); } catch {}
+}
+
+async function loadCollections() {
+  try { savedCollections = await (await fetch("/collections")).json(); }
+  catch { savedCollections = []; }
+  _loadCollVis();
+  renderCollectionsBar();
+}
+
+// Every token that currently exists (collections + "uncat" if any recipe is unassigned)
+function _allCollTokens() {
+  const toks = savedCollections.map(c => String(c.id));
+  if (savedRecipes.some(r => r.collection_id == null)) toks.push("uncat");
+  return toks;
+}
+
+function _collVisible(token) { return !_hiddenColls.has(token); }
+
+function renderCollectionsBar() {
+  const bar = document.getElementById("collections-bar");
+  if (!bar) return;
+  const hasUncat = savedRecipes.some(r => r.collection_id == null);
+  // Nothing to show if there are no collections at all — just a subtle "add" button
+  if (!savedCollections.length) {
+    bar.innerHTML = `<button class="coll-bar-btn" onclick="openManageCollections()">🗂️ + Add collections</button>`;
+    return;
+  }
+  const uncatCount = savedRecipes.filter(r => r.collection_id == null).length;
+  const chip = (token, name, count, color) => {
+    const vis = _collVisible(token);
+    const sw = color ? `<span class="coll-swatch" style="background:${esc(color)};width:10px;height:10px"></span>` : "";
+    return `<span class="coll-chip${vis ? "" : " off"}" title="Click the eye to show/hide · click the name to view only this">
+      <span class="coll-chip-eye" onclick="event.stopPropagation();toggleCollVis('${token}')" title="Show/hide">${vis ? "👁" : "🙈"}</span>
+      ${sw}<span onclick="event.stopPropagation();soloColl('${token}')">${esc(name)}</span>
+      <span class="coll-chip-count">${count}</span>
+    </span>`;
+  };
+  let html = `<span class="coll-bar-label">Collections</span>`;
+  html += savedCollections.map(c => chip(String(c.id), c.name, c.recipe_count || 0, c.color)).join("");
+  if (hasUncat) html += chip("uncat", "Uncategorized", uncatCount, null);
+  const anyHidden = _hiddenColls.size > 0;
+  if (anyHidden) html += `<button class="coll-bar-btn" onclick="collShowAll()" title="Show every collection">Show all</button>`;
+  html += `<button class="coll-bar-btn" onclick="openManageCollections()" title="Create, rename, delete collections">🗂️ Manage</button>`;
+  bar.innerHTML = html;
+}
+
+function toggleCollVis(token) {
+  if (_hiddenColls.has(token)) _hiddenColls.delete(token);
+  else _hiddenColls.add(token);
+  _saveCollVis();
+  renderCollectionsBar();
+  renderGrid();
+}
+
+// "Switch to" one collection — show only it, hide the rest
+function soloColl(token) {
+  const all = _allCollTokens();
+  // If it's already the only visible one, showing all is the natural toggle-back
+  const visibleNow = all.filter(_collVisible);
+  if (visibleNow.length === 1 && visibleNow[0] === token) {
+    collShowAll();
+    return;
+  }
+  _hiddenColls = new Set(all.filter(t => t !== token));
+  _saveCollVis();
+  renderCollectionsBar();
+  renderGrid();
+}
+
+function collShowAll() {
+  _hiddenColls.clear();
+  _saveCollVis();
+  renderCollectionsBar();
+  renderGrid();
+}
+
+// ── Manage collections modal ──────────────────────────────────
+function openManageCollections() {
+  renderCollManageList();
+  document.getElementById("coll-new-name").value = "";
+  document.getElementById("collections-modal-backdrop").hidden = false;
+}
+function closeManageCollections(e) {
+  if (!e || e.target === document.getElementById("collections-modal-backdrop"))
+    document.getElementById("collections-modal-backdrop").hidden = true;
+}
+function renderCollManageList() {
+  const el = document.getElementById("coll-manage-list");
+  if (!savedCollections.length) {
+    el.innerHTML = `<div style="color:var(--muted);font-size:0.85rem;padding:0.4rem 0">No collections yet. Add one below.</div>`;
+    return;
+  }
+  el.innerHTML = savedCollections.map(c => `
+    <div class="coll-manage-row">
+      <span class="coll-manage-name">${esc(c.name)}</span>
+      <span style="font-size:0.78rem;color:var(--muted)">${c.recipe_count || 0} recipe${(c.recipe_count||0)!==1?"s":""}</span>
+      <button class="cb-action-btn" title="Rename" onclick="renameCollectionUI(${c.id})">✏️</button>
+      <button class="cb-action-btn" title="Delete" onclick="deleteCollectionUI(${c.id})">🗑️</button>
+    </div>`).join("");
+}
+async function createCollectionUI() {
+  const inp = document.getElementById("coll-new-name");
+  const name = (inp.value || "").trim();
+  if (!name) return;
+  const res = await fetch("/collections", {
+    method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name})
+  });
+  if (!res.ok) { showAlert("Could not create collection."); return; }
+  const c = await res.json();
+  savedCollections.push(c);
+  inp.value = "";
+  renderCollManageList();
+  renderCollectionsBar();
+  showToast(`Collection "${name}" added`);
+}
+async function renameCollectionUI(id) {
+  const c = savedCollections.find(x => x.id === id);
+  if (!c) return;
+  const name = await showPrompt("Rename collection:", c.name);
+  if (!name || !name.trim() || name.trim() === c.name) return;
+  c.name = name.trim();
+  await fetch(`/collections/${id}`, {
+    method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({name: c.name})
+  });
+  renderCollManageList();
+  renderCollectionsBar();
+  renderGrid();
+}
+async function deleteCollectionUI(id) {
+  const c = savedCollections.find(x => x.id === id);
+  if (!c) return;
+  if (!await showConfirm(`Delete collection "${c.name}"? Its ${c.recipe_count||0} recipe(s) become Uncategorized (the recipes are kept).`)) return;
+  await fetch(`/collections/${id}`, { method:"DELETE" });
+  savedCollections = savedCollections.filter(x => x.id !== id);
+  // Recipes in it become uncategorized locally
+  savedRecipes.forEach(r => { if (r.collection_id === id) r.collection_id = null; });
+  _hiddenColls.delete(String(id));
+  _saveCollVis();
+  renderCollManageList();
+  renderCollectionsBar();
+  renderGrid();
+  showToast("Collection deleted");
+}
+
+// ── Assign a recipe to a collection (from its detail view) ────
+async function assignRecipeCollection(val) {
+  if (!selectedRecipe) return;
+  const cid = val === "" ? null : parseInt(val, 10);
+  selectedRecipe.collection_id = cid;
+  const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
+  if (idx !== -1) savedRecipes[idx].collection_id = cid;
+  await fetch(`/recipes/${selectedRecipe.id}/collection`, {
+    method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({collection_id: cid})
+  });
+  // Refresh counts + bar, and the grid so it's current when you go back
+  await loadCollections();
+  renderGrid();
+  showToast();
+}
+
+function collectionSelectorHTML(r) {
+  if (!savedCollections.length) {
+    return `<button class="coll-bar-btn" style="font-size:0.78rem" onclick="openManageCollections()">🗂️ + Add a collection</button>`;
+  }
+  const opts = [`<option value="">Uncategorized</option>`]
+    .concat(savedCollections.map(c =>
+      `<option value="${c.id}"${r.collection_id === c.id ? " selected" : ""}>${esc(c.name)}</option>`));
+  return `<select onchange="assignRecipeCollection(this.value)"
+    style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:0.85rem">
+    ${opts.join("")}
+  </select>`;
 }
 
 function applySort() {
@@ -1415,6 +1650,13 @@ function getSortedRecipes() {
         return [..._activeCatFilters].some(f => rc.includes(f));
       })
     : [...savedRecipes];
+  // Hide recipes whose collection is toggled off in the collections bar
+  if (_hiddenColls.size) {
+    list = list.filter(r => {
+      const token = r.collection_id != null ? String(r.collection_id) : "uncat";
+      return !_hiddenColls.has(token);
+    });
+  }
   if (tokens.length) {
     list = list.filter(r => {
       if (_ingSearchMode) {
@@ -2947,6 +3189,12 @@ function buildSavedHTML(r) {
         <div>${buildCategoryTagsHTML("saved", r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []))}</div>
       </div>
     </div>
+    <div class="meta" style="margin-top:-0.3rem">
+      <div class="meta-item" style="align-items:center;gap:0.4rem">🗂️
+        <span style="font-size:0.82rem;color:var(--muted)">Collection:</span>
+        ${collectionSelectorHTML(r)}
+      </div>
+    </div>
     ${notesHtml}
     <div style="display:flex;align-items:center;gap:0.5rem;margin:0.5rem 0 0.8rem;font-size:0.82rem;color:var(--muted)">
       <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;user-select:none" title="When enabled, this recipe will only scale to multiples of its base serving size (e.g. base 15, target 100 → scales to 105)">
@@ -4320,12 +4568,13 @@ async function switchCookbook(i) {
   if (!res.ok) { showAlert("Could not switch cookbook."); return; }
   savedCookbooks.forEach(c => c.isActive = (c.path === cb.path));
   renderCookbooksGrid();
-  savedRecipes = []; savedMeals = [];
+  savedRecipes = []; savedMeals = []; savedCollections = [];
   _undoStack.length = 0; _updateUndoButtons();
+  // Set the name FIRST so per-cookbook collection view state loads the right key
+  document.getElementById("cookbook-name-display").textContent = cb.name;
   await loadSavedRecipes();
   updateSavedCount();
   updateShoppingCount();
-  document.getElementById("cookbook-name-display").textContent = cb.name;
   showToast(`Switched to "${cb.name}"`);
 }
 

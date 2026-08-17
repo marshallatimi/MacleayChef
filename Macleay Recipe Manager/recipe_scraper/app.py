@@ -310,11 +310,23 @@ def init_db():
                     "view_count INTEGER DEFAULT 0", "categories TEXT DEFAULT NULL",
                     "notes TEXT DEFAULT NULL", "updated_at TIMESTAMP DEFAULT NULL",
                     "base_recipe TEXT DEFAULT NULL", "scale_by_batch INTEGER DEFAULT 0",
-                    "directions_text TEXT DEFAULT NULL"]:
+                    "directions_text TEXT DEFAULT NULL", "collection_id INTEGER DEFAULT NULL"]:
             try:
                 conn.execute(f"ALTER TABLE recipes ADD COLUMN {col}")
             except Exception:
                 pass
+        # Collections: a higher-level grouping above category tags (e.g. two
+        # sides of a business, plus an "Archived" bucket). Stored in the
+        # cookbook so the collections + their recipe assignments travel with it.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS collections (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL,
+                color      TEXT DEFAULT NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         for col in ["categories TEXT DEFAULT NULL", "default_servings REAL DEFAULT NULL",
                     "notes TEXT DEFAULT NULL", "image TEXT DEFAULT NULL"]:
             try:
@@ -958,10 +970,104 @@ def list_recipes():
         "SELECT id,title,servings,servings_num,"
         "ingredient_groups,instruction_groups,total_time,site_name,source_url,"
         "category,categories,notes,view_count,created_at,updated_at,base_recipe,scale_by_batch,"
-        "directions_text"
+        "directions_text,collection_id"
         " FROM recipes ORDER BY created_at DESC"
     ).fetchall()
     return jsonify([row_to_dict(r) for r in rows])
+
+
+# ── Collections (higher-level grouping above category tags) ────────────────────
+
+@app.route("/collections", methods=["GET"])
+def list_collections():
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, name, color, sort_order FROM collections ORDER BY sort_order, name"
+    ).fetchall()
+    # Include a recipe count per collection for the UI
+    counts = {}
+    for r in db.execute(
+        "SELECT collection_id, COUNT(*) AS n FROM recipes WHERE collection_id IS NOT NULL GROUP BY collection_id"
+    ).fetchall():
+        counts[r["collection_id"]] = r["n"]
+    result = []
+    for row in rows:
+        d = dict(row)
+        d["recipe_count"] = counts.get(row["id"], 0)
+        result.append(d)
+    return jsonify(result)
+
+
+@app.route("/collections", methods=["POST"])
+def create_collection():
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    db = get_db()
+    row = db.execute("SELECT COALESCE(MAX(sort_order), -1) FROM collections").fetchone()
+    next_order = (row[0] if row else -1) + 1
+    cur = db.execute(
+        "INSERT INTO collections (name, color, sort_order) VALUES (?,?,?)",
+        (name, data.get("color"), next_order)
+    )
+    db.commit()
+    return jsonify({"id": cur.lastrowid, "name": name,
+                    "color": data.get("color"), "sort_order": next_order,
+                    "recipe_count": 0}), 201
+
+
+@app.route("/collections/<int:cid>", methods=["PUT"])
+def update_collection(cid):
+    data = request.get_json() or {}
+    db = get_db()
+    sets, vals = [], []
+    if "name" in data:
+        nm = (data.get("name") or "").strip()
+        if nm:
+            sets.append("name=?"); vals.append(nm)
+    if "color" in data:
+        sets.append("color=?"); vals.append(data.get("color"))
+    if "sort_order" in data:
+        sets.append("sort_order=?"); vals.append(data.get("sort_order"))
+    if sets:
+        vals.append(cid)
+        db.execute(f"UPDATE collections SET {', '.join(sets)} WHERE id=?", vals)
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/collections/<int:cid>", methods=["DELETE"])
+def delete_collection(cid):
+    db = get_db()
+    # Recipes in this collection fall back to Uncategorized (collection_id NULL)
+    db.execute("UPDATE recipes SET collection_id=NULL WHERE collection_id=?", (cid,))
+    db.execute("DELETE FROM collections WHERE id=?", (cid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/collections/reorder", methods=["PATCH"])
+def reorder_collections():
+    data = request.get_json() or {}
+    order = data.get("order", [])
+    db = get_db()
+    for i, cid in enumerate(order):
+        db.execute("UPDATE collections SET sort_order=? WHERE id=?", (i, cid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/recipes/<int:rid>/collection", methods=["PUT"])
+def set_recipe_collection(rid):
+    """Assign a recipe to a collection (or null to make it Uncategorized)."""
+    data = request.get_json() or {}
+    cid = data.get("collection_id")
+    cid = int(cid) if cid not in (None, "", "null") else None
+    db = get_db()
+    db.execute("UPDATE recipes SET collection_id=? WHERE id=?", (cid, rid))
+    db.commit()
+    return jsonify({"ok": True, "collection_id": cid})
 
 
 def parse_text_recipe(text):
