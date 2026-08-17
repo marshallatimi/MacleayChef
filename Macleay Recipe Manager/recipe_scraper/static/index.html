@@ -387,13 +387,12 @@
     /* ── Collections (higher-level grouping above category tags) ── */
     .collections-bar { display:flex; flex-wrap:wrap; align-items:center; gap:0.4rem; margin-bottom:0.9rem; }
     .collections-bar:empty { display:none; }
-    .coll-chip { display:inline-flex; align-items:center; gap:0.35rem; padding:0.28rem 0.7rem; border:1.5px solid var(--border); border-radius:999px; background:var(--card); color:var(--text); font-size:0.82rem; font-weight:600; cursor:pointer; transition:all 0.12s; white-space:nowrap; user-select:none; }
-    .coll-chip:hover { border-color:var(--red); }
-    .coll-chip.active { background:var(--red); border-color:var(--red); color:#fff; }
-    .coll-chip.active .coll-chip-count { background:rgba(255,255,255,0.28); color:#fff; }
-    .coll-chip .coll-chip-count { background:var(--bg); color:var(--muted); border-radius:999px; padding:0 0.4rem; font-size:0.72rem; font-weight:700; }
-    .coll-chip.off { opacity:0.5; }
-    .coll-chip.off .coll-chip-eye { opacity:0.6; }
+    .coll-check { display:inline-flex; align-items:center; gap:0.4rem; padding:0.28rem 0.7rem; border:1.5px solid var(--border); border-radius:999px; background:var(--card); color:var(--muted); font-size:0.82rem; font-weight:600; cursor:pointer; transition:all 0.12s; white-space:nowrap; user-select:none; }
+    .coll-check:hover { border-color:var(--red); }
+    .coll-check input { cursor:pointer; accent-color:var(--red); margin:0; }
+    .coll-check.on { color:var(--text); border-color:var(--red); background:rgba(192,57,43,0.06); }
+    .coll-check .coll-chip-count { background:var(--bg); color:var(--muted); border-radius:999px; padding:0 0.4rem; font-size:0.72rem; font-weight:700; }
+    .coll-bar-sep { width:1px; align-self:stretch; background:var(--border); margin:0.1rem 0.25rem; }
     .coll-bar-label { font-size:0.78rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-right:0.15rem; }
     .coll-bar-btn { background:none; border:1.5px solid var(--border); border-radius:999px; padding:0.28rem 0.7rem; font-size:0.8rem; color:var(--muted); cursor:pointer; font-family:inherit; }
     .coll-bar-btn:hover { border-color:var(--red); color:var(--red); }
@@ -401,6 +400,16 @@
     .coll-manage-row:last-child { border-bottom:none; }
     .coll-manage-name { flex:1; font-size:0.9rem; font-weight:600; }
     .coll-swatch { width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid var(--border); }
+
+    /* ── Bulk select ── */
+    .bulk-bar { display:flex; flex-wrap:wrap; align-items:center; gap:0.6rem; margin-bottom:0.9rem; padding:0.6rem 0.9rem; background:var(--card); border:2px solid var(--red); border-radius:10px; position:sticky; top:0.4rem; z-index:20; box-shadow:0 3px 14px rgba(0,0,0,0.12); }
+    .bulk-bar-count { font-weight:800; font-size:0.95rem; color:var(--red); }
+    .bulk-bar select { padding:0.4rem 0.6rem; border:1.5px solid var(--border); border-radius:7px; background:var(--card); color:var(--text); font-size:0.85rem; font-family:inherit; }
+    .grid-card.bulk, .list-card.bulk { cursor:pointer; }
+    .grid-card.bulk.sel, .list-card.bulk.sel { outline:3px solid var(--red); outline-offset:-1px; }
+    .bulk-check { position:absolute; top:8px; left:8px; z-index:5; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.92); border:2px solid var(--red); display:flex; align-items:center; justify-content:center; font-size:0.9rem; color:var(--red); font-weight:800; }
+    .grid-card.bulk.sel .bulk-check { background:var(--red); color:#fff; }
+    .list-card.bulk .bulk-check { position:static; flex-shrink:0; }
     /* Clear-X inside a search field */
     .search-clear-wrap { position:relative; flex:1; min-width:180px; display:flex; }
     .search-clear-wrap input { flex:1; min-width:0; padding-right:2rem; }
@@ -526,12 +535,12 @@
     <button class="nav-hist-btn" id="nav-fwd-btn"  onclick="navForward()" disabled title="Go forward">&#8594;</button>
     <div class="nav-divider"></div>
     <!-- Tab buttons inline -->
-    <button class="tab-btn active" id="tab-scrape-btn" onclick="showTab('scrape')">Scrape Recipe</button>
-    <button class="tab-btn" id="tab-saved-btn" onclick="showTab('saved')">My Recipes <span id="saved-count"></span></button>
+    <button class="tab-btn active" id="tab-saved-btn" onclick="showTab('saved')">My Recipes <span id="saved-count"></span></button>
     <button class="tab-btn" id="tab-shopping-btn" onclick="showTab('shopping')">Shopping List <span id="shopping-count"></span></button>
     <button class="tab-btn" id="tab-meals-btn" onclick="showTab('meals')">Meals <span id="meals-count"></span></button>
     <button class="tab-btn" id="tab-groupmeal-btn" onclick="showTab('groupmeal')">🍽️ Group Meal</button>
     <button class="tab-btn" id="tab-cookbooks-btn" onclick="showTab('cookbooks')">📚 Cookbooks <span id="cookbooks-count"></span></button>
+    <button class="tab-btn" id="tab-scrape-btn" onclick="showTab('scrape')">Scrape Recipe</button>
     <!-- Menu controls pushed to the right -->
     <div class="menubar">
       <div class="menu-wrap" id="file-menu-wrap">
@@ -553,7 +562,7 @@
   </div>
 </header>
 
-<div id="tab-scrape" class="page">
+<div id="tab-scrape" class="page" hidden>
   <div class="search-bar">
     <input id="url-input" type="url" placeholder="Paste a recipe URL…" />
     <button id="scrape-btn" onclick="scrapeRecipe()">Get Recipe</button>
@@ -562,7 +571,7 @@
   <div id="scrape-result"></div>
 </div>
 
-<div id="tab-saved" class="page" hidden>
+<div id="tab-saved" class="page">
   <div id="saved-list-view">
     <div id="collections-bar" class="collections-bar"></div>
     <div class="grid-controls">
@@ -596,10 +605,12 @@
       </div>
       <div class="grid-controls-right">
         <button id="recipe-undo-btn" class="btn btn-ghost btn-undo" onclick="undoLastDelete()" disabled title="Undo last delete">↩ Undo</button>
+        <button id="bulk-select-btn" class="btn btn-ghost" style="font-size:0.88rem;padding:0.45rem 1rem" onclick="toggleBulkMode()" title="Select multiple recipes">☑ Select</button>
         <button class="btn btn-ghost" style="font-size:0.88rem;padding:0.45rem 1rem" onclick="openImportRecipesModal()">📥 Import</button>
         <button class="btn btn-primary" style="font-size:0.88rem;padding:0.45rem 1rem" onclick="openCreateRecipeModal()">+ Create</button>
       </div>
     </div>
+    <div id="bulk-bar" class="bulk-bar" hidden></div>
     <div id="recipe-grid" class="recipe-grid"></div>
   </div>
   <div id="saved-detail-view" hidden>
@@ -1252,6 +1263,8 @@ function showTab(tab) {
     document.getElementById("saved-list-view").hidden = false;
     document.getElementById("saved-detail-view").hidden = true;
     selectedRecipe = null;
+    // Always leave bulk-select mode when arriving at the recipes list
+    if (_bulkMode) toggleBulkMode();
     loadSavedRecipes();
   }
   if (tab === "shopping") initShoppingTab();
@@ -1385,20 +1398,22 @@ function renderCollectionsBar() {
     return;
   }
   const uncatCount = savedRecipes.filter(r => r.collection_id == null).length;
-  const chip = (token, name, count, color) => {
+  // Checklist: tick a collection to show its recipes, untick to hide them.
+  const item = (token, name, count, color) => {
     const vis = _collVisible(token);
-    const sw = color ? `<span class="coll-swatch" style="background:${esc(color)};width:10px;height:10px"></span>` : "";
-    return `<span class="coll-chip${vis ? "" : " off"}" title="Click the eye to show/hide · click the name to view only this">
-      <span class="coll-chip-eye" onclick="event.stopPropagation();toggleCollVis('${token}')" title="Show/hide">${vis ? "👁" : "🙈"}</span>
-      ${sw}<span onclick="event.stopPropagation();soloColl('${token}')">${esc(name)}</span>
+    const sw = color ? `<span class="coll-swatch" style="background:${esc(color)}"></span>` : "";
+    return `<label class="coll-check${vis ? " on" : ""}" title="Show/hide ${esc(name)}">
+      <input type="checkbox" ${vis ? "checked" : ""} onchange="toggleCollVis('${token}')"/>
+      ${sw}<span class="coll-check-name">${esc(name)}</span>
       <span class="coll-chip-count">${count}</span>
-    </span>`;
+    </label>`;
   };
-  let html = `<span class="coll-bar-label">Collections</span>`;
-  html += savedCollections.map(c => chip(String(c.id), c.name, c.recipe_count || 0, c.color)).join("");
-  if (hasUncat) html += chip("uncat", "Uncategorized", uncatCount, null);
-  const anyHidden = _hiddenColls.size > 0;
-  if (anyHidden) html += `<button class="coll-bar-btn" onclick="collShowAll()" title="Show every collection">Show all</button>`;
+  let html = `<span class="coll-bar-label">Show</span>`;
+  html += savedCollections.map(c => item(String(c.id), c.name, c.recipe_count || 0, c.color)).join("");
+  if (hasUncat) html += item("uncat", "Uncategorized", uncatCount, null);
+  html += `<span class="coll-bar-sep"></span>`;
+  html += `<button class="coll-bar-btn" onclick="collShowAll()" title="Tick every collection">All</button>`;
+  html += `<button class="coll-bar-btn" onclick="collHideAll()" title="Untick every collection">None</button>`;
   html += `<button class="coll-bar-btn" onclick="openManageCollections()" title="Create, rename, delete collections">🗂️ Manage</button>`;
   bar.innerHTML = html;
 }
@@ -1411,23 +1426,15 @@ function toggleCollVis(token) {
   renderGrid();
 }
 
-// "Switch to" one collection — show only it, hide the rest
-function soloColl(token) {
-  const all = _allCollTokens();
-  // If it's already the only visible one, showing all is the natural toggle-back
-  const visibleNow = all.filter(_collVisible);
-  if (visibleNow.length === 1 && visibleNow[0] === token) {
-    collShowAll();
-    return;
-  }
-  _hiddenColls = new Set(all.filter(t => t !== token));
+function collShowAll() {
+  _hiddenColls.clear();
   _saveCollVis();
   renderCollectionsBar();
   renderGrid();
 }
 
-function collShowAll() {
-  _hiddenColls.clear();
+function collHideAll() {
+  _hiddenColls = new Set(_allCollTokens());
   _saveCollVis();
   renderCollectionsBar();
   renderGrid();
@@ -1689,34 +1696,155 @@ function renderGrid() {
     container.innerHTML = `<div class="empty-state"><div class="big-icon">📋</div><p>${msg}</p></div>`;
     return;
   }
+  const bulk = _bulkMode;
   const mode = appSettings.viewMode || "grid";
   if (mode === "list") {
     container.className = "list-view";
     container.innerHTML = list.map(r => {
       const cats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
       const meta = [fmtServings(r.servings), cats.join(", ")].filter(Boolean).join(" · ");
-      return `<div class="list-card" onclick="openRecipe(${r.id})">
+      const sel = _bulkSelected.has(r.id);
+      const onclick = bulk ? `toggleBulkSelect(${r.id})` : `openRecipe(${r.id})`;
+      return `<div class="list-card${bulk ? " bulk" : ""}${bulk && sel ? " sel" : ""}" onclick="${onclick}">
+        ${bulk ? `<div class="bulk-check">${sel ? "✓" : ""}</div>` : ""}
         ${r.image ? `<img class="list-thumb" src="${esc(r.image)}" loading="lazy"/>` : `<div class="list-thumb-ph">🍽️</div>`}
         <div class="list-info">
           <div class="list-title">${esc(r.title)}</div>
           ${meta ? `<div class="list-meta">${esc(meta)}</div>` : ""}
         </div>
-        <button class="list-del" onclick="deleteRecipeById(${r.id},event)" title="Delete">✕</button>
+        ${bulk ? "" : `<button class="list-del" onclick="deleteRecipeById(${r.id},event)" title="Delete">✕</button>`}
       </div>`;
     }).join("");
   } else {
     container.className = "recipe-grid";
-    container.innerHTML = list.map(r => `
-      <div class="grid-card" onclick="openRecipe(${r.id})">
-        <button class="grid-card-del" onclick="deleteRecipeById(${r.id},event)" title="Delete">✕</button>
+    container.innerHTML = list.map(r => {
+      const sel = _bulkSelected.has(r.id);
+      const onclick = bulk ? `toggleBulkSelect(${r.id})` : `openRecipe(${r.id})`;
+      return `
+      <div class="grid-card${bulk ? " bulk" : ""}${bulk && sel ? " sel" : ""}" onclick="${onclick}">
+        ${bulk
+          ? `<div class="bulk-check">${sel ? "✓" : ""}</div>`
+          : `<button class="grid-card-del" onclick="deleteRecipeById(${r.id},event)" title="Delete">✕</button>`}
         ${r.image ? `<img src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy"/>` : `<div class="grid-card-img-placeholder">🍽️</div>`}
         <div class="grid-card-body">
           <div class="grid-card-title">${esc(r.title)}</div>
           ${(r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : [])).length ? `<div style="display:flex;flex-wrap:wrap;gap:0.2rem;margin-top:0.2rem">${(r.categories && r.categories.length ? r.categories : [r.category]).map(c=>`<span class="grid-cat-badge">${esc(c)}</span>`).join("")}</div>` : ""}
           <div class="grid-card-meta">${esc(fmtServings(r.servings))}</div>
         </div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Bulk select (delete / export / assign to collection)
+// ══════════════════════════════════════════════════════════════
+let _bulkMode = false;
+let _bulkSelected = new Set();
+
+function toggleBulkMode() {
+  _bulkMode = !_bulkMode;
+  _bulkSelected.clear();
+  const btn = document.getElementById("bulk-select-btn");
+  if (btn) {
+    btn.textContent = _bulkMode ? "✕ Cancel" : "☑ Select";
+    btn.classList.toggle("btn-primary", _bulkMode);
+    btn.classList.toggle("btn-ghost", !_bulkMode);
+  }
+  renderBulkBar();
+  renderGrid();
+}
+
+function toggleBulkSelect(id) {
+  if (_bulkSelected.has(id)) _bulkSelected.delete(id);
+  else _bulkSelected.add(id);
+  // Update just the affected card + the bar (avoid a full re-render)
+  renderGrid();
+  renderBulkBar();
+}
+
+function renderBulkBar() {
+  const bar = document.getElementById("bulk-bar");
+  if (!bar) return;
+  if (!_bulkMode) { bar.hidden = true; bar.innerHTML = ""; return; }
+  bar.hidden = false;
+  const n = _bulkSelected.size;
+  const collOpts = [`<option value="">Assign to collection…</option>`]
+    .concat(savedCollections.map(c => `<option value="${c.id}">${esc(c.name)}</option>`))
+    .concat([`<option value="__none">Uncategorized</option>`]);
+  bar.innerHTML = `
+    <span class="bulk-bar-count">${n} selected</span>
+    <button class="coll-bar-btn" onclick="bulkSelectAllVisible()">Select all</button>
+    <button class="coll-bar-btn" onclick="bulkClear()" ${n ? "" : "disabled"}>Clear</button>
+    <span class="coll-bar-sep"></span>
+    <select onchange="bulkAssignCollection(this.value); this.selectedIndex=0" ${n ? "" : "disabled"}>${collOpts.join("")}</select>
+    <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.4rem 0.9rem" onclick="bulkExport()" ${n ? "" : "disabled"}>💾 Export</button>
+    <button class="btn btn-danger" style="font-size:0.85rem;padding:0.4rem 0.9rem" onclick="bulkDelete()" ${n ? "" : "disabled"}>🗑 Delete</button>
+    <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.4rem 0.9rem;margin-left:auto" onclick="toggleBulkMode()">Done</button>`;
+}
+
+function bulkSelectAllVisible() {
+  getSortedRecipes().forEach(r => _bulkSelected.add(r.id));
+  renderGrid();
+  renderBulkBar();
+}
+
+function bulkClear() {
+  _bulkSelected.clear();
+  renderGrid();
+  renderBulkBar();
+}
+
+async function bulkAssignCollection(val) {
+  if (!_bulkSelected.size || val === "") return;
+  const cid = val === "__none" ? null : parseInt(val, 10);
+  const ids = [..._bulkSelected];
+  // optimistic local update
+  ids.forEach(id => {
+    const r = savedRecipes.find(x => x.id === id);
+    if (r) r.collection_id = cid;
+  });
+  renderGrid();
+  await Promise.all(ids.map(id => fetch(`/recipes/${id}/collection`, {
+    method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({collection_id: cid})
+  })));
+  await loadCollections();
+  renderGrid();
+  const name = cid == null ? "Uncategorized" : (savedCollections.find(c => c.id === cid)?.name || "collection");
+  showToast(`Moved ${ids.length} recipe${ids.length!==1?"s":""} to ${name}`);
+}
+
+async function bulkExport() {
+  if (!_bulkSelected.size) return;
+  const recipes = getSortedRecipes().filter(r => _bulkSelected.has(r.id));
+  if (!recipes.length) return;
+  // Fetch full records (grid list omits images) so exported PDFs include photos
+  const full = [];
+  for (const r of recipes) {
+    try { full.push(await (await fetch(`/recipes/${r.id}`)).json()); }
+    catch { full.push(r); }
+  }
+  const html = buildMealRecipesHtml(full, full.map(() => 1));
+  await exportPdf(html, `Recipes (${full.length})`);
+}
+
+async function bulkDelete() {
+  const ids = [..._bulkSelected];
+  if (!ids.length) return;
+  if (!await showConfirm(`Delete ${ids.length} recipe${ids.length!==1?"s":""}? You can undo from the ↩ Undo button.`)) return;
+  for (const id of ids) {
+    const r = savedRecipes.find(x => x.id === id);
+    if (!r) continue;
+    await fetch(`/recipes/${id}`, { method: "DELETE" });
+    savedRecipes = savedRecipes.filter(x => x.id !== id);
+    _pushUndo("recipe", id, r, r.title);
+  }
+  _bulkSelected.clear();
+  updateSavedCount();
+  await loadCollections();
+  renderGrid();
+  renderBulkBar();
+  showToast(`Deleted ${ids.length} recipe${ids.length!==1?"s":""}`);
 }
 
 let _savedListScrollY = 0;
@@ -4794,10 +4922,14 @@ async function openCookbooksFolder() {
 
 
 loadAppSettings();
-loadCookbookInfo();
 loadShopSettings();
-updateSavedCount();
 updateShoppingCount();
+// My Recipes is the default tab now — load the cookbook name first (so the
+// per-cookbook collections view restores under the right key), then recipes.
+(async () => {
+  await loadCookbookInfo();
+  await loadSavedRecipes();
+})();
 
 // ── External-change watcher ────────────────────────────────────
 // Linked cookbooks can live on cloud-synced drives (OneDrive, Google Drive…).
