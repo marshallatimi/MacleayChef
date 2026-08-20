@@ -140,7 +140,11 @@
     .about-box h3 { font-size: 1.2rem; margin-bottom: 0.3rem; }
     .about-box p { font-size: 0.85rem; color: var(--muted); }
 
-    .recipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(140px,18vw,195px),1fr)); gap: clamp(0.5rem,1.5vw,1rem); align-items: start; }
+    .recipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(140px,18vw,195px),1fr)); gap: clamp(0.5rem,1.5vw,1rem); align-items: stretch; }
+    /* Cards in a row share the same height; make the body a column so its
+       content sits comfortably with room top and bottom. */
+    .recipe-grid .grid-card { display: flex; flex-direction: column; }
+    .recipe-grid .grid-card .grid-card-body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
     /* ── List-view alternative ─────────────────────────────────── */
     .list-view { display: flex; flex-direction: column; gap: 0.35rem; }
     .list-card { display: flex; align-items: center; gap: 0.75rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; cursor: pointer; transition: background 0.12s, box-shadow 0.12s; position: relative; }
@@ -280,10 +284,11 @@
     .grid-card-del { position:absolute; top:6px; right:6px; background:rgba(0,0,0,0.55); color:#fff; border:none; border-radius:50%; width:26px; height:26px; font-size:0.75rem; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s,background 0.15s; }
     .grid-card:hover .grid-card-del { opacity:1; }
     .grid-card-del:hover { background:var(--red) !important; }
-    .grid-card-body { padding:0.8rem; }
+    .grid-card-body { padding:0.9rem 0.85rem; }
     /* No-image cards: reserve a little top space so the corner controls
-       (delete ✕, hide 👁, bulk checkmark) don't overlap the title. */
-    .grid-card.no-img .grid-card-body { padding-top:2.1rem; }
+       (delete ✕, hide 👁, bulk checkmark) don't overlap the title, and keep
+       comfortable breathing room top and bottom so text isn't cramped. */
+    .grid-card.no-img .grid-card-body { padding-top:1.5rem; padding-bottom:1.1rem; }
     .grid-card-title { font-weight:700; font-size:0.95rem; line-height:1.3; margin-bottom:0.3rem; }
     .grid-card-meta { font-size:0.78rem; color:var(--muted); }
 
@@ -405,6 +410,11 @@
     .coll-swatch { width:14px; height:14px; border-radius:50%; flex-shrink:0; border:1px solid var(--border); }
     /* Collection badge shown on recipe cards */
     .recipe-coll-badge { display:inline-flex; align-items:center; gap:0.25rem; background:var(--red); color:#fff; border-radius:6px; padding:0.08rem 0.5rem; font-size:0.72rem; font-weight:800; margin-top:0.25rem; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* Export format chooser */
+    .export-opt { display:block; width:100%; text-align:left; background:var(--bg); border:2px solid var(--border); border-radius:10px; padding:0.8rem 1rem; margin-bottom:0.7rem; cursor:pointer; font-family:inherit; transition:border-color 0.12s,background 0.12s; }
+    .export-opt:hover { border-color:var(--red); background:var(--card); }
+    .export-opt-title { font-size:0.98rem; font-weight:800; color:var(--text); margin-bottom:0.2rem; }
+    .export-opt-desc { font-size:0.8rem; color:var(--muted); line-height:1.45; }
 
     /* ── Bulk select ── */
     .bulk-bar { display:flex; flex-wrap:wrap; align-items:center; gap:0.6rem; margin-bottom:0.9rem; padding:0.6rem 0.9rem; background:var(--card); border:2px solid var(--red); border-radius:10px; position:sticky; top:0.4rem; z-index:20; box-shadow:0 3px 14px rgba(0,0,0,0.12); }
@@ -961,6 +971,25 @@
   <div class="rp-modal" onclick="event.stopPropagation()">
     <button class="rp-close" onclick="closeRecipePreview()" title="Close">✕</button>
     <div id="rp-modal-content"></div>
+  </div>
+</div>
+
+<!-- Export Recipe Modal (format chooser) -->
+<div id="export-recipe-modal-backdrop" class="img-modal-backdrop" hidden onclick="closeExportRecipeModal(event)">
+  <div class="img-modal" style="width:min(440px,94vw)" onclick="event.stopPropagation()">
+    <h3>📤 Export Recipe</h3>
+    <p style="font-size:0.84rem;color:var(--muted);margin-bottom:1rem">Choose a format for "<strong id="export-recipe-name"></strong>".</p>
+    <button class="export-opt" onclick="exportRecipeAs('csv')">
+      <div class="export-opt-title">📄 Recipe file (.csv)</div>
+      <div class="export-opt-desc">Best for backing up or moving a recipe. Re-imports into any cookbook with <strong>everything intact</strong> — categories, notes, ingredient sections, and directions.</div>
+    </button>
+    <button class="export-opt" onclick="exportRecipeAs('pdf')">
+      <div class="export-opt-title">🖨 PDF</div>
+      <div class="export-opt-desc">Best for printing or sharing a nice-looking copy. Not meant for re-importing (private notes are left off, and some structure is lost).</div>
+    </button>
+    <div class="img-modal-btns" style="margin-top:1rem">
+      <button class="btn btn-ghost" onclick="closeExportRecipeModal()">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -3345,8 +3374,7 @@ function buildSavedHTML(r) {
       <div class="recipe-toolbar-right">
         <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="undoRecipeChange()" ${_recipeHistory.length ? '' : 'disabled'} title="Undo last change (${_recipeHistory.length} available)">↩ Undo</button>
         <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printRecipe('saved')">🖨 Print</button>
-        <button class="btn btn-dark" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportRecipePdf('saved')">💾 Save PDF</button>
-        <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="copyRecipe('saved')">Copy</button>
+        <button class="btn btn-dark" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="openExportRecipeModal()">📤 Export</button>
         <button class="btn btn-danger" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="deleteRecipe()">🗑 Delete</button>
       </div>
     </div>
@@ -3995,7 +4023,10 @@ function showPrompt(message, defaultValue = "") {
     const inp = document.getElementById("prompt-modal-input");
     inp.value = defaultValue;
     document.getElementById("prompt-modal-backdrop").hidden = false;
-    setTimeout(() => { inp.focus(); inp.select(); }, 60);
+    // Focus reliably: the field is ready to type in the moment the dialog opens.
+    const focusIt = () => { inp.focus(); inp.select(); };
+    requestAnimationFrame(focusIt);
+    setTimeout(() => { if (document.activeElement !== inp) focusIt(); }, 80);
   });
 }
 function resolvePrompt(value) {
@@ -5105,12 +5136,11 @@ function renderMealGrid() {
     container.innerHTML = filtered.map(m => {
       const thumbSrc = m.image || (m.recipes.find(r => r.image) || {}).image || null;
       const cats = (m.categories && m.categories.length ? m.categories : (m.category ? [m.category] : []));
-      const meta = [`${m.recipes.length} recipe${m.recipes.length===1?"":"s"}`, cats.join(", ")].filter(Boolean).join(" · ");
       return `<div class="list-card" onclick="openMeal(${m.id})">
         ${thumbSrc ? `<img class="list-thumb" src="${esc(thumbSrc)}" loading="lazy"/>` : ""}
         <div class="list-info">
           <div class="list-title">${esc(m.name)}</div>
-          ${meta ? `<div class="list-meta">${esc(meta)}</div>` : ""}
+          ${cats.length ? `<div class="list-meta">${esc(cats.join(", "))}</div>` : ""}
         </div>
         <button class="list-del" onclick="deleteMealById(${m.id},event)" title="Delete">✕</button>
       </div>`;
@@ -5122,16 +5152,13 @@ function renderMealGrid() {
       const thumbHtml = thumbSrc
         ? `<img src="${esc(thumbSrc)}" alt="${esc(m.name)}" loading="lazy" style="width:100%;height:150px;object-fit:cover;display:block"/>`
         : "";
-      const badges = m.recipes.slice(0,3).map(r => `<span class="grid-cat-badge">${esc(r.title)}</span>`).join(" ");
-      const more = m.recipes.length > 3 ? ` <span class="grid-cat-badge">+${m.recipes.length-3} more</span>` : "";
+      const cats = (m.categories && m.categories.length ? m.categories : (m.category ? [m.category] : []));
       return `<div class="grid-card${thumbSrc ? "" : " no-img"}" onclick="openMeal(${m.id})">
         <button class="grid-card-del" onclick="deleteMealById(${m.id},event)" title="Delete">✕</button>
         ${thumbHtml}
         <div class="grid-card-body">
           <div class="grid-card-title">${esc(m.name)}</div>
-          ${(m.categories && m.categories.length ? m.categories : (m.category ? [m.category] : [])).length ? `<div style="display:flex;flex-wrap:wrap;gap:0.2rem;margin-top:0.2rem">${(m.categories && m.categories.length ? m.categories : [m.category]).map(c=>`<span class="grid-cat-badge">${esc(c)}</span>`).join("")}</div>` : ""}
-          <div class="grid-card-meta">${m.recipes.length} recipe${m.recipes.length===1?"":"s"}</div>
-          <div class="meal-card-recipes">${badges}${more}</div>
+          ${cats.length ? `<div style="display:flex;flex-wrap:wrap;gap:0.2rem;margin-top:0.3rem">${cats.map(c=>`<span class="grid-cat-badge">${esc(c)}</span>`).join("")}</div>` : ""}
         </div>
       </div>`;
     }).join("");
@@ -6170,6 +6197,30 @@ function exportRecipePdf(ctx) {
 <style>${PRINT_CSS}</style>
 </head><body>${buildRecipeBlock(r, factor)}</body></html>`;
   exportPdf(html, r.title || "recipe");
+}
+
+// ── Export format chooser (recipe detail) ─────────────────────
+function openExportRecipeModal() {
+  if (!selectedRecipe) return;
+  document.getElementById("export-recipe-name").textContent = selectedRecipe.title || "Recipe";
+  document.getElementById("export-recipe-modal-backdrop").hidden = false;
+}
+function closeExportRecipeModal(e) {
+  if (!e || e.target === document.getElementById("export-recipe-modal-backdrop"))
+    document.getElementById("export-recipe-modal-backdrop").hidden = true;
+}
+async function exportRecipeAs(fmt) {
+  closeExportRecipeModal();
+  if (!selectedRecipe) return;
+  if (fmt === "pdf") { exportRecipePdf("saved"); return; }
+  if (fmt === "csv") {
+    try {
+      const res = await fetch(`/recipes/${selectedRecipe.id}/export-csv`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) showToast(`Saved to Downloads: ${data.filename}`);
+      else showAlert(data.error || "Export failed.");
+    } catch { showAlert("Export failed."); }
+  }
 }
 
 function exportMealPdf() {

@@ -1648,8 +1648,8 @@ def save_recipe():
             """INSERT INTO recipes
                (title, servings, servings_num, ingredients, instructions,
                 ingredient_groups, instruction_groups, image, total_time, site_name, source_url, category, categories,
-                base_recipe, scale_by_batch, directions_text)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                base_recipe, scale_by_batch, directions_text, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 data.get("title", "Untitled"),
                 data.get("servings"),
@@ -1667,6 +1667,7 @@ def save_recipe():
                 data.get("base_recipe") or None,
                 1 if data.get("scale_by_batch") else 0,
                 directions or None,
+                data.get("notes") or None,
             ),
         )
         db.commit()
@@ -3170,8 +3171,39 @@ def _image_from_import(image_val):
 _RM_CSV_HEADER = [
     "rm_version", "title", "categories", "category", "servings", "servings_num",
     "total_time", "source_url", "site_name", "image",
-    "ingredient_groups", "instruction_groups",
+    "ingredient_groups", "instruction_groups", "notes", "directions_text",
 ]
+
+
+def _recipe_csv_row(r):
+    """Build one MacleayChef CSV row (list) from a recipe dict."""
+    cats = r.get("categories") or ([r["category"]] if r.get("category") else [])
+    return [
+        "1",                                                        # rm_version
+        r.get("title") or "",
+        json.dumps(cats, ensure_ascii=False),                       # categories (JSON array)
+        cats[0] if cats else "",                                    # category (first, legacy)
+        r.get("servings") or "",
+        r.get("servings_num") if r.get("servings_num") is not None else "",
+        r.get("total_time") or "",
+        r.get("source_url") or "",
+        r.get("site_name") or "",
+        _image_to_exportable(r.get("image") or ""),
+        json.dumps(r.get("ingredient_groups") or [], ensure_ascii=False),
+        json.dumps(r.get("instruction_groups") or [], ensure_ascii=False),
+        r.get("notes") or "",
+        r.get("directions_text") or "",
+    ]
+
+
+def _recipes_to_rm_csv(recipe_dicts):
+    """Serialise a list of recipe dicts to MacleayChef CSV text (lossless)."""
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    writer.writerow(_RM_CSV_HEADER)
+    for r in recipe_dicts:
+        writer.writerow(_recipe_csv_row(r))
+    return output.getvalue()
 
 
 def export_cookbook_csv(cookbook_path):
@@ -3180,30 +3212,7 @@ def export_cookbook_csv(cookbook_path):
     conn.row_factory = sqlite3.Row
     rows = conn.execute("SELECT * FROM recipes ORDER BY title COLLATE NOCASE").fetchall()
     conn.close()
-
-    output = io.StringIO()
-    writer = csv.writer(output, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
-    writer.writerow(_RM_CSV_HEADER)
-
-    for row in rows:
-        r = row_to_dict(row)
-        cats = r.get("categories") or ([r["category"]] if r.get("category") else [])
-        writer.writerow([
-            "1",                                                        # rm_version
-            r.get("title") or "",
-            json.dumps(cats, ensure_ascii=False),                       # categories (JSON array)
-            cats[0] if cats else "",                                    # category (first, legacy)
-            r.get("servings") or "",
-            r.get("servings_num") if r.get("servings_num") is not None else "",
-            r.get("total_time") or "",
-            r.get("source_url") or "",
-            r.get("site_name") or "",
-            _image_to_exportable(r.get("image") or ""),
-            json.dumps(r.get("ingredient_groups") or [], ensure_ascii=False),
-            json.dumps(r.get("instruction_groups") or [], ensure_ascii=False),
-        ])
-
-    return output.getvalue()
+    return _recipes_to_rm_csv([row_to_dict(row) for row in rows])
 
 
 # ── Unicode fraction normalisation ────────────────────────────
@@ -3275,6 +3284,11 @@ def parse_rm_csv(csv_path):
                 single = (row.get("category") or "").strip()
                 cats = [single] if single else []
             cats = [c for c in cats if c][:5]
+            # directions_text: prefer the explicit column; else fall back to the
+            # flattened steps so directions survive even from older exports.
+            dtext = (row.get("directions_text") or "").strip()
+            if not dtext and flat_steps:
+                dtext = "\n".join(s for s in flat_steps if s and s.strip())
             recipes.append({
                 "title":              title,
                 "categories":         cats,
@@ -3285,6 +3299,8 @@ def parse_rm_csv(csv_path):
                 "source_url":         (row.get("source_url") or "").strip() or None,
                 "site_name":          (row.get("site_name") or "").strip() or None,
                 "image":              image,
+                "notes":              (row.get("notes") or "").strip() or None,
+                "directions_text":    dtext or None,
                 "ingredients":        flat_ings,
                 "instructions":       flat_steps,
                 "ingredient_groups":  ig,
@@ -3882,6 +3898,37 @@ def import_cookbook():
                         "recipeCount": len(recipes)})
     else:
         return jsonify({"error": "Unsupported file type. Use .cookbook, .csv, or .txt"}), 400
+
+
+@app.route("/recipes/<int:rid>/export-csv", methods=["POST"])
+def export_recipe_csv_route(rid):
+    """Export a single recipe as a lossless MacleayChef CSV, saved to Downloads.
+    Round-trips every field (categories, notes, ingredient sections, directions)
+    when re-imported. Collection is intentionally NOT included."""
+    import pathlib
+    row = get_db().execute("SELECT * FROM recipes WHERE id=?", (rid,)).fetchone()
+    if not row:
+        return jsonify({"error": "Recipe not found"}), 404
+    r = row_to_dict(row)
+    try:
+        csv_content = _recipes_to_rm_csv([r])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    safe_name = re.sub(r'[^\w\s\-]', '', r.get("title") or "recipe").strip() or "recipe"
+    downloads = pathlib.Path.home() / "Downloads"
+    if not downloads.exists():
+        downloads = pathlib.Path.home() / "Desktop"
+    out_path = downloads / (safe_name + ".csv")
+    # Avoid clobbering an existing file with the same name
+    n = 2
+    while out_path.exists():
+        out_path = downloads / (f"{safe_name} ({n}).csv")
+        n += 1
+    try:
+        out_path.write_text(csv_content, encoding="utf-8-sig")
+    except Exception as e:
+        return jsonify({"error": f"Could not write file: {e}"}), 500
+    return jsonify({"ok": True, "path": str(out_path), "filename": out_path.name})
 
 
 @app.route("/cookbooks/export", methods=["POST"])
