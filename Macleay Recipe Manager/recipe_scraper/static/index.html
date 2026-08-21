@@ -6808,6 +6808,10 @@ function renderGroupMealDetail() {
       </div>` : ""}
       ${savedRecipes.length ? `<div style="flex:1;min-width:220px">
         <div class="section-title" style="margin-bottom:0.5rem">Add Recipe</div>
+        <select id="gm-recipe-cat-filter" onchange="renderGroupMealRecipeBrowser()"
+          style="padding:0.3rem 0.55rem;border:1px solid var(--border);border-radius:5px;background:var(--card);color:var(--text);font-size:0.82rem;width:160px;margin-bottom:0.4rem">
+          ${_gmRecipeCategoryOptions()}
+        </select>
         <div class="shop-search-bar" style="margin-bottom:0.5rem">
           <div class="search-clear-wrap">
             <input type="text" id="gm-recipe-search" placeholder="Search recipes…" oninput="_gmToggleClear('gm-recipe-search');renderGroupMealRecipeBrowser()"/>
@@ -6927,7 +6931,18 @@ function _gmMealCategoryOptions() {
     cats.map(c => `<option value="${esc(c)}"${c === cur ? " selected" : ""}>${esc(c)}</option>`).join("");
 }
 
+// Same, for the Add-Recipe category dropdown in the group meal editor.
+function _gmRecipeCategoryOptions() {
+  const cats = [...new Set(
+    (savedRecipes || []).flatMap(r => r.categories || (r.category ? [r.category] : []))
+  )].filter(Boolean).sort((a, b) => a.localeCompare(b));
+  const cur = _gmRecipeCatFilter || "";
+  return `<option value="">All categories</option>` +
+    cats.map(c => `<option value="${esc(c)}"${c === cur ? " selected" : ""}>${esc(c)}</option>`).join("");
+}
+
 let _gmMealCatFilter = "";
+let _gmRecipeCatFilter = "";
 
 function renderGroupMealBrowser() {
   const browser = document.getElementById("gm-meal-browser");
@@ -7049,15 +7064,25 @@ function renderGroupMealRecipeBrowser() {
   const browser = document.getElementById("gm-recipe-browser");
   if (!browser || !selectedGroupMeal) return;
   const q = (document.getElementById("gm-recipe-search")?.value || "").toLowerCase();
-  const matches = savedRecipes.filter(r => !q || (r.title||"").toLowerCase().includes(q));
+  const catFilter = document.getElementById("gm-recipe-cat-filter")?.value || "";
+  _gmRecipeCatFilter = catFilter; // remember selection across re-renders
+  const matches = savedRecipes.filter(r => {
+    if (q && !(r.title||"").toLowerCase().includes(q)) return false;
+    if (catFilter) {
+      const rCats = r.categories || (r.category ? [r.category] : []);
+      return rCats.includes(catFilter);
+    }
+    return true;
+  });
   browser.innerHTML = matches.length
     ? matches.map(r => {
         const rCats = (r.categories && r.categories.length ? r.categories : (r.category ? [r.category] : []));
         const tags = rCats.length
           ? `<div class="gm-browser-tags">${rCats.map(c => `<span class="grid-cat-badge">${esc(c)}</span>`).join("")}</div>` : "";
+        const thumb = _recipeThumbSrc(r);
         return `
         <div class="shop-recipe-row" onclick="addRecipeToGroupMeal(${r.id})">
-          ${r.image ? `<img class="shop-recipe-thumb" src="${esc(r.image)}" loading="lazy"/>` : `<div class="shop-recipe-thumb-placeholder">🍽️</div>`}
+          ${thumb ? `<img class="shop-recipe-thumb" src="${esc(thumb)}" loading="lazy"/>` : `<div class="shop-recipe-thumb-placeholder">🍽️</div>`}
           <div class="shop-recipe-info">
             <div class="shop-recipe-title">${esc(r.title)}</div>
             <div class="shop-recipe-meta">${esc(fmtServings(r.servings))}</div>
