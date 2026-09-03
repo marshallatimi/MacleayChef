@@ -751,7 +751,7 @@
     <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
       <button class="btn btn-ghost" onclick="importCookbook()">📥 Import Cookbook</button>
       <button class="btn btn-ghost" onclick="linkExternalCookbook()" title="Open a .cookbook file from any folder (network drive, cloud storage, etc.)">🔗 Link from File…</button>
-      <button class="btn btn-ghost" onclick="openMergeCookbookModal()" title="Pull descriptions and new recipes from another cookbook into this one">🔀 Merge from Cookbook…</button>
+      <button class="btn btn-ghost" onclick="openMergeCookbookModal()" title="Pull recipes, meals and group meals from another cookbook into this one">🔀 Merge from Cookbook…</button>
       <button class="btn btn-primary" onclick="createCookbook()">+ New Cookbook</button>
     </div>
   </div>
@@ -815,8 +815,18 @@
       <input type="checkbox" id="merge-opt-meta"> Servings, categories &amp; notes
     </label>
 
-    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1rem;font-size:0.88rem;cursor:pointer;padding-top:0.6rem;border-top:1px solid var(--border)">
-      <input type="checkbox" id="merge-opt-add-new" checked> Add recipes from source that don't exist here
+    <div style="font-size:0.8rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.45rem;padding-top:0.6rem;border-top:1px solid var(--border)">Also bring over from the source:</div>
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;font-size:0.88rem;cursor:pointer">
+      <input type="checkbox" id="merge-opt-add-new" checked> Recipes that don't exist here
+    </label>
+    <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;font-size:0.88rem;cursor:pointer">
+      <input type="checkbox" id="merge-opt-meals" checked> Meals that don't exist here
+    </label>
+    <label style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:1rem;font-size:0.88rem;cursor:pointer">
+      <input type="checkbox" id="merge-opt-groups" checked style="margin-top:0.18rem;flex-shrink:0">
+      <span>Group meals that don't exist here
+        <span style="display:block;font-size:0.76rem;color:var(--muted)">Any recipe or meal a merged meal/group needs is pulled in automatically.</span>
+      </span>
     </label>
 
     <div id="merge-result" style="font-size:0.85rem;color:var(--muted);min-height:1.2rem"></div>
@@ -7204,8 +7214,10 @@ async function confirmMergeCookbook() {
   const updIng    = document.getElementById("merge-opt-ingredients")?.checked ?? false;
   const updMeta   = document.getElementById("merge-opt-meta")?.checked ?? false;
   const addNew    = document.getElementById("merge-opt-add-new")?.checked ?? true;
+  const addMeals  = document.getElementById("merge-opt-meals")?.checked ?? true;
+  const addGroups = document.getElementById("merge-opt-groups")?.checked ?? true;
 
-  if (!updInstr && !updIng && !updMeta && !addNew) {
+  if (!updInstr && !updIng && !updMeta && !addNew && !addMeals && !addGroups) {
     showAlert("Please select at least one merge option.");
     return;
   }
@@ -7215,6 +7227,8 @@ async function confirmMergeCookbook() {
   if (updIng)    lines.push("• Matching recipes: update ingredients");
   if (updMeta)   lines.push("• Matching recipes: update servings, categories & notes");
   if (addNew)    lines.push("• Add recipes from source that don't exist here");
+  if (addMeals)  lines.push("• Add meals from source that don't exist here");
+  if (addGroups) lines.push("• Add group meals from source that don't exist here");
 
   const ok = await showConfirm(
     `Merge "${srcName}" into "${active?.name || "active cookbook"}"?\n\n${lines.join("\n")}`,
@@ -7234,6 +7248,8 @@ async function confirmMergeCookbook() {
         update_ingredients:   updIng,
         update_meta:          updMeta,
         add_new:              addNew,
+        merge_meals:          addMeals,
+        merge_groups:         addGroups,
       })
     });
     const data = await res.json();
@@ -7246,6 +7262,8 @@ async function confirmMergeCookbook() {
     const updParts = [];
     if (data.updated > 0)  updParts.push(`updated <strong>${data.updated}</strong> matching recipe${data.updated!==1?"s":""}`);
     if (data.added  > 0)   updParts.push(`added <strong>${data.added}</strong> new recipe${data.added!==1?"s":""}`);
+    if (data.meals_added  > 0) updParts.push(`added <strong>${data.meals_added}</strong> meal${data.meals_added!==1?"s":""}`);
+    if (data.groups_added > 0) updParts.push(`added <strong>${data.groups_added}</strong> group meal${data.groups_added!==1?"s":""}`);
     resultEl.innerHTML = `✅ Done! ${updParts.length ? updParts.join(", ") + "." : "Nothing changed."}` +
       (data.added_titles?.length
         ? `<div style="margin-top:0.4rem;font-size:0.8rem;color:var(--muted)">` +

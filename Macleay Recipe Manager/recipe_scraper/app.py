@@ -2754,10 +2754,17 @@ def merge_cookbook():
         "update_instructions": true,   // update directions_text / instruction_groups
         "update_ingredients":  false,  // update ingredient_groups / ingredients
         "update_meta":         false,  // update servings, categories, notes
-        "add_new":             true    // insert recipes that don't exist in active cookbook
+        "add_new":             true,   // insert recipes that don't exist in active cookbook
+        "merge_meals":         true,   // bring over meals not already here (by name)
+        "merge_groups":        true    // bring over group meals not already here (by name)
       }
 
-    Returns: {"updated": N, "added": M, "added_titles": [...]}
+    Meals and group meals are re-linked to the active cookbook's recipe/meal ids.
+    Any recipe or meal a merged meal/group needs is pulled in on demand even when
+    add_new is off, so the merged meals are never left with missing pieces.
+
+    Returns: {"updated": N, "added": M, "added_titles": [...],
+              "meals_added": P, "groups_added": Q}
     """
     data     = request.get_json() or {}
     src_path = (data.get("source_path") or "").strip()
@@ -2770,13 +2777,24 @@ def merge_cookbook():
     upd_ingredients  = bool(data.get("update_ingredients",  False))
     upd_meta         = bool(data.get("update_meta",         False))
     add_new          = bool(data.get("add_new",             True))
+    merge_meals      = bool(data.get("merge_meals",         True))
+    merge_groups     = bool(data.get("merge_groups",        True))
 
-    # ── Read source recipes ──────────────────────────────────────────────────
+    # ── Read source cookbook (recipes + meals + group meals) ─────────────────
+    def _read_all(conn, table):
+        try:
+            return [dict(r) for r in conn.execute(f"SELECT * FROM {table}").fetchall()]
+        except Exception:
+            return []   # older cookbooks may not have every table
+
     try:
         src_conn             = sqlite3.connect(src_path)
         src_conn.row_factory = sqlite3.Row
-        src_rows             = src_conn.execute("SELECT * FROM recipes").fetchall()
-        src_recipes          = [dict(r) for r in src_rows]
+        src_recipes          = _read_all(src_conn, "recipes")
+        src_meals            = _read_all(src_conn, "meals")
+        src_meal_recipes     = _read_all(src_conn, "meal_recipes")
+        src_groups           = _read_all(src_conn, "group_meals")
+        src_group_members    = _read_all(src_conn, "group_meal_members")
     except Exception as e:
         return jsonify({"error": f"Could not read source cookbook: {e}"}), 400
     finally:
@@ -2795,11 +2813,41 @@ def merge_cookbook():
     added        = 0
     added_titles = []
 
+    # Meals and group meals reference recipes/meals by id, but the source ids
+    # won't match the active cookbook's ids. Track src→target id maps so those
+    # links can be rebuilt after the recipes/meals land here.
+    src_recipes_by_id = {sr["id"]: sr for sr in src_recipes if sr.get("id") is not None}
+    recipe_id_map     = {}
+
+    def _insert_source_recipe(sr):
+        """Insert one source recipe into the active cookbook; return its new id."""
+        cur = db.execute(
+            """INSERT INTO recipes
+                   (title, servings, servings_num, ingredients, instructions,
+                    ingredient_groups, instruction_groups, image, total_time,
+                    site_name, source_url, category, categories, notes,
+                    scale_by_batch, directions_text)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                (sr.get("title") or "").strip(),
+                sr.get("servings"), sr.get("servings_num"),
+                sr.get("ingredients"), sr.get("instructions"),
+                sr.get("ingredient_groups"), sr.get("instruction_groups"),
+                sr.get("image"), sr.get("total_time"),
+                sr.get("site_name"), sr.get("source_url"),
+                sr.get("category"), sr.get("categories"), sr.get("notes"),
+                sr.get("scale_by_batch", 0), sr.get("directions_text"),
+            ),
+        )
+        return cur.lastrowid
+
     for sr in src_recipes:
         title = (sr.get("title") or "").strip()
         key   = title.lower()
 
         if key in existing_map:
+            existing_id = existing_map[key]
+            recipe_id_map[sr.get("id")] = existing_id
             # Build UPDATE from whichever fields were selected
             set_clauses = []
             values      = []
@@ -2820,7 +2868,7 @@ def merge_cookbook():
                                 sr.get("category"), sr.get("categories"), sr.get("notes")]
 
             if set_clauses:
-                values.append(existing_map[key])
+                values.append(existing_id)
                 db.execute(
                     f"UPDATE recipes SET {', '.join(set_clauses)} WHERE id=?",
                     values,
@@ -2828,38 +2876,178 @@ def merge_cookbook():
                 updated += 1
 
         elif add_new:
-            # Insert entire recipe from source
-            db.execute(
-                """INSERT INTO recipes
-                       (title, servings, servings_num, ingredients, instructions,
-                        ingredient_groups, instruction_groups, image, total_time,
-                        site_name, source_url, category, categories, notes,
-                        scale_by_batch, directions_text)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    title,
-                    sr.get("servings"),
-                    sr.get("servings_num"),
-                    sr.get("ingredients"),
-                    sr.get("instructions"),
-                    sr.get("ingredient_groups"),
-                    sr.get("instruction_groups"),
-                    sr.get("image"),
-                    sr.get("total_time"),
-                    sr.get("site_name"),
-                    sr.get("source_url"),
-                    sr.get("category"),
-                    sr.get("categories"),
-                    sr.get("notes"),
-                    sr.get("scale_by_batch", 0),
-                    sr.get("directions_text"),
-                ),
-            )
+            new_id = _insert_source_recipe(sr)
+            recipe_id_map[sr.get("id")] = new_id
+            existing_map[key] = new_id
             added += 1
             added_titles.append(title)
 
+    def ensure_recipe(src_rid):
+        """Return the active-cookbook recipe id for a source recipe id, inserting
+        the recipe on demand — e.g. it belongs to a merged meal but the standalone
+        'add new recipes' option was off. Recipes with the same title are reused."""
+        nonlocal added
+        if src_rid is None:
+            return None
+        if src_rid in recipe_id_map:
+            return recipe_id_map[src_rid]
+        sr = src_recipes_by_id.get(src_rid)
+        if not sr:
+            return None
+        title = (sr.get("title") or "").strip()
+        key = title.lower()
+        if key in existing_map:
+            recipe_id_map[src_rid] = existing_map[key]
+            return existing_map[key]
+        new_id = _insert_source_recipe(sr)
+        recipe_id_map[src_rid] = new_id
+        existing_map[key] = new_id
+        added += 1
+        added_titles.append(title)
+        return new_id
+
+    meals_added  = 0
+    groups_added = 0
+
+    if merge_meals or merge_groups:
+        # Group source meal_recipes by meal, ordered as they appear in the meal.
+        mr_by_meal = {}
+        for mr in src_meal_recipes:
+            mr_by_meal.setdefault(mr.get("meal_id"), []).append(mr)
+        for lst in mr_by_meal.values():
+            lst.sort(key=lambda x: (x.get("sort_order") or 0))
+
+        src_meals_by_id = {sm["id"]: sm for sm in src_meals if sm.get("id") is not None}
+
+        # Existing meals in the active cookbook, keyed by normalised name.
+        existing_meal_map = {
+            (m["name"] or "").strip().lower(): m["id"]
+            for m in db.execute("SELECT id, name FROM meals").fetchall()
+        }
+        meal_id_map = {}
+
+        def ensure_meal(src_mid):
+            """Return the active-cookbook meal id for a source meal id, creating the
+            meal (and any missing constituent recipes) on demand. Meals with the same
+            name are reused, never duplicated."""
+            nonlocal meals_added
+            if src_mid is None:
+                return None
+            if src_mid in meal_id_map:
+                return meal_id_map[src_mid]
+            sm = src_meals_by_id.get(src_mid)
+            if not sm:
+                return None
+            key = (sm.get("name") or "").strip().lower()
+            if key in existing_meal_map:
+                meal_id_map[src_mid] = existing_meal_map[key]
+                return existing_meal_map[key]
+            cur = db.execute(
+                """INSERT INTO meals (name, category, categories, default_servings, notes, image)
+                   VALUES (?,?,?,?,?,?)""",
+                (sm.get("name") or "Untitled meal", sm.get("category"), sm.get("categories"),
+                 sm.get("default_servings"), sm.get("notes"), sm.get("image")),
+            )
+            new_mid = cur.lastrowid
+            meal_id_map[src_mid]   = new_mid
+            existing_meal_map[key] = new_mid
+            meals_added += 1
+            for mr in mr_by_meal.get(src_mid, []):
+                tgt_rid = ensure_recipe(mr.get("recipe_id"))
+                if tgt_rid is not None:
+                    db.execute(
+                        "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, servings) "
+                        "VALUES (?,?,?,?)",
+                        (new_mid, tgt_rid, mr.get("sort_order") or 0, mr.get("servings")),
+                    )
+            return new_mid
+
+        if merge_meals:
+            for sm in src_meals:
+                ensure_meal(sm.get("id"))
+
+        if merge_groups:
+            # Group source members by group, in display order.
+            gm_by_group = {}
+            for gmm in src_group_members:
+                gm_by_group.setdefault(gmm.get("group_id"), []).append(gmm)
+            for lst in gm_by_group.values():
+                lst.sort(key=lambda x: ((x.get("sort_order") or 0), (x.get("row_id") or 0)))
+
+            existing_group_names = {
+                (g["name"] or "").strip().lower()
+                for g in db.execute("SELECT name FROM group_meals").fetchall()
+            }
+
+            def _remap_recipe_servings(raw_rs):
+                """recipe_servings is a JSON map {recipe_id: servings}; the keys are
+                source recipe ids, so remap them to the active cookbook's ids."""
+                if not raw_rs:
+                    return None
+                try:
+                    rs_obj = json.loads(raw_rs)
+                except Exception:
+                    return None
+                new_obj = {}
+                for k, v in rs_obj.items():
+                    tgt = recipe_id_map.get(int(k)) if str(k).isdigit() else None
+                    if tgt is not None:
+                        new_obj[str(tgt)] = v
+                return json.dumps(new_obj) if new_obj else None
+
+            for sg in src_groups:
+                gkey = (sg.get("name") or "").strip().lower()
+                if gkey in existing_group_names:
+                    continue  # additive only: skip groups that already exist by name
+                cur = db.execute(
+                    "INSERT INTO group_meals (name, default_servings, image) VALUES (?,?,?)",
+                    (sg.get("name") or "Untitled group", sg.get("default_servings"), sg.get("image")),
+                )
+                new_gid = cur.lastrowid
+                existing_group_names.add(gkey)
+                groups_added += 1
+
+                for gmm in gm_by_group.get(sg.get("id"), []):
+                    sort_order    = gmm.get("sort_order") or 0
+                    section_title = gmm.get("section_title")
+                    src_rid       = gmm.get("recipe_id")
+                    src_mid       = gmm.get("meal_id")
+
+                    if section_title:                      # section header slot
+                        db.execute(
+                            "INSERT INTO group_meal_members (group_id, meal_id, section_title, sort_order) "
+                            "VALUES (?,?,?,?)",
+                            (new_gid, 0, section_title, sort_order),
+                        )
+                    elif src_rid:                          # standalone-recipe slot
+                        tgt_rid = ensure_recipe(src_rid)
+                        if tgt_rid is not None:
+                            db.execute(
+                                "INSERT INTO group_meal_members "
+                                "(group_id, meal_id, recipe_id, servings, sort_order, recipe_servings) "
+                                "VALUES (?,?,?,?,?,?)",
+                                (new_gid, 0, tgt_rid, gmm.get("servings"), sort_order,
+                                 _remap_recipe_servings(gmm.get("recipe_servings"))),
+                            )
+                    elif src_mid:                          # meal slot
+                        tgt_mid = ensure_meal(src_mid)
+                        if tgt_mid is not None:
+                            db.execute(
+                                "INSERT INTO group_meal_members "
+                                "(group_id, meal_id, servings, sort_order, recipe_servings) "
+                                "VALUES (?,?,?,?,?)",
+                                (new_gid, tgt_mid, gmm.get("servings"), sort_order,
+                                 _remap_recipe_servings(gmm.get("recipe_servings"))),
+                            )
+
     db.commit()
-    return jsonify({"updated": updated, "added": added, "added_titles": added_titles})
+    return jsonify({
+        "updated":      updated,
+        "added":        added,
+        "added_titles": added_titles,
+        "meals_added":  meals_added,
+        "groups_added": groups_added,
+    })
 
 
 # ── Shopping settings ─────────────────────────────────────────────────────────
