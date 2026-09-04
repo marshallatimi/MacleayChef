@@ -327,12 +327,9 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        for col in ["categories TEXT DEFAULT NULL", "default_servings REAL DEFAULT NULL",
-                    "notes TEXT DEFAULT NULL", "image TEXT DEFAULT NULL"]:
-            try:
-                conn.execute(f"ALTER TABLE meals ADD COLUMN {col}")
-            except Exception:
-                pass
+        # Create the meals table FIRST, then add any newer columns. (The ALTER
+        # loop must run after CREATE, or a brand-new cookbook never gets the
+        # notes/image columns — which breaks meal notes/photos and merges.)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS meals (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -343,10 +340,13 @@ def init_db():
                 created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        try:
-            conn.execute("ALTER TABLE meals ADD COLUMN category TEXT DEFAULT NULL")
-        except Exception:
-            pass
+        for col in ["category TEXT DEFAULT NULL", "categories TEXT DEFAULT NULL",
+                    "default_servings REAL DEFAULT NULL",
+                    "notes TEXT DEFAULT NULL", "image TEXT DEFAULT NULL"]:
+            try:
+                conn.execute(f"ALTER TABLE meals ADD COLUMN {col}")
+            except Exception:
+                pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS meal_recipes (
                 meal_id    INTEGER NOT NULL,
