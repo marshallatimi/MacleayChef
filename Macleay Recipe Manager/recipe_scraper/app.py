@@ -1735,6 +1735,13 @@ def update_recipe(rid):
             rid,
         ),
     )
+    # Persist collection only when explicitly included, so edits that don't
+    # carry collection_id (older payloads) can't accidentally clear it. This
+    # lets the recipe-detail Undo restore collection along with everything else.
+    if "collection_id" in data:
+        cid = data.get("collection_id")
+        cid = int(cid) if cid not in (None, "", "null") else None
+        db.execute("UPDATE recipes SET collection_id=? WHERE id=?", (cid, rid))
     db.commit()
     row = db.execute("SELECT * FROM recipes WHERE id=?", (rid,)).fetchone()
     return jsonify(row_to_dict(row))

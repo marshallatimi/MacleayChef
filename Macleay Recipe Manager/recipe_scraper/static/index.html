@@ -1619,15 +1619,12 @@ async function assignRecipeCollection(val) {
   if (!selectedRecipe) return;
   const cid = val === "" ? null : parseInt(val, 10);
   selectedRecipe.collection_id = cid;
-  const idx = savedRecipes.findIndex(r => r.id === selectedRecipe.id);
-  if (idx !== -1) savedRecipes[idx].collection_id = cid;
-  await fetch(`/recipes/${selectedRecipe.id}/collection`, {
-    method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({collection_id: cid})
-  });
-  // Refresh counts + bar, and the grid so it's current when you go back
+  // Route through patchRecipe so this change lands on the recipe-detail Undo
+  // stack (patchRecipe snapshots the recipe first) and persists collection_id.
+  await patchRecipe();
+  // Refresh collection counts + card badges
   await loadCollections();
   renderGrid();
-  showToast();
 }
 
 function collectionSelectorHTML(r) {
@@ -1937,11 +1934,14 @@ async function bulkAssignCollection(val) {
   if (!_bulkSelected.size || val === "") return;
   const cid = val === "__none" ? null : parseInt(val, 10);
   const ids = [..._bulkSelected];
+  // Snapshot BEFORE the change (only the recipes actually changing) for undo
+  const snaps = _snapshotFields(ids).filter(s => s.collection_id !== cid);
   // optimistic local update
   ids.forEach(id => {
     const r = savedRecipes.find(x => x.id === id);
     if (r) r.collection_id = cid;
   });
+  _pushFieldsUndo(snaps, "collection change");
   renderGrid();
   await Promise.all(ids.map(id => fetch(`/recipes/${id}/collection`, {
     method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({collection_id: cid})
@@ -2024,6 +2024,7 @@ async function bulkAddNewTag() {
 
 async function _bulkApplyTag(tag, mode) {
   const recs = _bulkSelectedRecipes();
+  const snapsBefore = _snapshotFields(recs.map(r => r.id));  // capture pre-change
   const updates = [];
   recs.forEach(r => {
     let cur = _recipeCats(r).slice();
@@ -2039,6 +2040,10 @@ async function _bulkApplyTag(tag, mode) {
     r.category = cur[0] || null;
     updates.push({ id: r.id, categories: cur });
   });
+  // Push undo for just the recipes that actually changed
+  const changedIds = new Set(updates.map(u => u.id));
+  _pushFieldsUndo(snapsBefore.filter(s => changedIds.has(s.id)),
+                  `${mode === "add" ? "add" : "remove"} tag "${tag}"`);
   renderGrid();
   await Promise.all(updates.map(u => fetch(`/recipes/${u.id}/categories`, {
     method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({categories: u.categories})
@@ -2637,10 +2642,48 @@ function _pushUndo(type, id, data, label) {
   _updateUndoButtons();
 }
 
+// Snapshot the undoable per-recipe fields (tags + collection) for a set of ids,
+// captured BEFORE a change so undo can restore them.
+function _snapshotFields(ids) {
+  return ids.map(id => {
+    const r = savedRecipes.find(x => x.id === id);
+    return r ? { id, categories: (r.categories || []).slice(),
+                 category: r.category ?? null, collection_id: r.collection_id ?? null } : null;
+  }).filter(Boolean);
+}
+function _pushFieldsUndo(snapshots, label) {
+  if (!snapshots || !snapshots.length) return;
+  _undoStack.push({ type: "fields", snapshots, label });
+  if (_undoStack.length > 20) _undoStack.shift();
+  _updateUndoButtons();
+}
+
 async function undoLastDelete() {
   if (!_undoStack.length) return;
   const entry = _undoStack.pop();
   _updateUndoButtons();
+  // ── Revert a bulk tag/collection change ──────────────────────────────────
+  if (entry.type === "fields") {
+    try {
+      for (const s of entry.snapshots) {
+        const r = savedRecipes.find(x => x.id === s.id);
+        if (r) { r.categories = s.categories.slice(); r.category = s.category; r.collection_id = s.collection_id; }
+        await fetch(`/recipes/${s.id}/categories`, {
+          method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({categories: s.categories})
+        });
+        await fetch(`/recipes/${s.id}/collection`, {
+          method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({collection_id: s.collection_id})
+        });
+      }
+      await loadCollections();
+      updateCatFilter();
+      renderGrid();
+      showToast(`Undo: reverted ${entry.snapshots.length} recipe${entry.snapshots.length!==1?"s":""} (${esc(entry.label)})`);
+    } catch {
+      showAlert("Could not undo that change.");
+    }
+    return;
+  }
   try {
     const endpoint = entry.type === "recipe"
       ? `/recipes/${entry.id}/restore`
