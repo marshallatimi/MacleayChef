@@ -425,6 +425,19 @@
     .bulk-check { position:absolute; top:8px; left:8px; z-index:5; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,0.92); border:2px solid var(--red); display:flex; align-items:center; justify-content:center; font-size:0.9rem; color:var(--red); font-weight:800; }
     .grid-card.bulk.sel .bulk-check { background:var(--red); color:#fff; }
     .list-card.bulk .bulk-check { position:static; flex-shrink:0; }
+    /* Bulk tag add/remove dropdown */
+    .bulk-tag-menu { position:absolute; top:calc(100% + 4px); left:0; z-index:60; width:250px; max-height:320px; overflow-y:auto; background:var(--card); border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.2); padding:0.35rem; }
+    .bulk-tag-hint { font-size:0.72rem; color:var(--muted); padding:0.2rem 0.4rem 0.45rem; line-height:1.35; }
+    .bulk-tag-item { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0.5rem; border-radius:6px; cursor:pointer; font-size:0.85rem; color:var(--text); }
+    .bulk-tag-item:hover { background:var(--bg); }
+    .bulk-tag-box { width:18px; height:18px; flex-shrink:0; border:1.5px solid var(--border); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:0.8rem; font-weight:800; color:#fff; }
+    .bulk-tag-item.state-all .bulk-tag-box  { background:var(--red); border-color:var(--red); }
+    .bulk-tag-item.state-some .bulk-tag-box { background:var(--muted); border-color:var(--muted); }
+    .bulk-tag-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .bulk-tag-count { font-size:0.72rem; color:var(--muted); font-weight:700; }
+    .bulk-tag-empty { font-size:0.82rem; color:var(--muted); padding:0.5rem; }
+    .bulk-tag-add { display:flex; gap:0.35rem; padding:0.4rem 0.3rem 0.2rem; border-top:1px solid var(--border); margin-top:0.3rem; }
+    .bulk-tag-add input { flex:1; min-width:0; padding:0.35rem 0.5rem; border:1.5px solid var(--border); border-radius:6px; background:var(--card); color:var(--text); font-size:0.82rem; font-family:inherit; }
     /* Clear-X inside a search field */
     .search-clear-wrap { position:relative; flex:1; min-width:180px; display:flex; }
     .search-clear-wrap input { flex:1; min-width:0; padding-right:2rem; }
@@ -1841,21 +1854,23 @@ function renderBulkBar() {
   const collOpts = [`<option value="">Assign to collection…</option>`]
     .concat(savedCollections.map(c => `<option value="${c.id}">${esc(c.name)}</option>`))
     .concat([`<option value="__none">Uncategorized</option>`]);
-  // Existing category tags across recipes + meals, plus a "new tag" option
-  const allCats = [...new Set([
-    ...(savedRecipes || []).flatMap(r => r.categories || (r.category ? [r.category] : [])),
-    ...(savedMeals || []).flatMap(m => m.categories || (m.category ? [m.category] : []))
-  ])].filter(Boolean).sort((a,b) => a.localeCompare(b));
-  const tagOpts = [`<option value="">Add tag…</option>`]
-    .concat(allCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`))
-    .concat([`<option value="__new">＋ New tag…</option>`]);
   bar.innerHTML = `
     <span class="bulk-bar-count">${n} selected</span>
     <button class="coll-bar-btn" onclick="bulkSelectAllVisible()">Select all</button>
     <button class="coll-bar-btn" onclick="bulkClear()" ${n ? "" : "disabled"}>Clear</button>
     <span class="coll-bar-sep"></span>
     <select onchange="bulkAssignCollection(this.value); this.selectedIndex=0" ${n ? "" : "disabled"}>${collOpts.join("")}</select>
-    <select onchange="bulkAddCategory(this.value); this.selectedIndex=0" ${n ? "" : "disabled"} title="Add a category tag to all selected recipes">${tagOpts.join("")}</select>
+    <div id="bulk-tag-wrap" style="position:relative;display:inline-block">
+      <button class="coll-bar-btn" onclick="toggleBulkTagMenu(event)" ${n ? "" : "disabled"} title="Add or remove category tags across all selected recipes">🏷️ Tags ▾</button>
+      <div id="bulk-tag-menu" hidden class="bulk-tag-menu">
+        <div class="bulk-tag-hint">Click a tag to add it to all selected; click again to remove it from all.</div>
+        <div id="bulk-tag-list"></div>
+        <div class="bulk-tag-add">
+          <input type="text" id="bulk-tag-new" placeholder="New tag…" onkeydown="if(event.key==='Enter'){event.preventDefault();bulkAddNewTag();}"/>
+          <button class="coll-bar-btn" onclick="bulkAddNewTag()">Add</button>
+        </div>
+      </div>
+    </div>
     <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.4rem 0.9rem" onclick="bulkExport()" ${n ? "" : "disabled"}>💾 Export</button>
     <button class="btn btn-danger" style="font-size:0.85rem;padding:0.4rem 0.9rem" onclick="bulkDelete()" ${n ? "" : "disabled"}>🗑 Delete</button>
     <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.4rem 0.9rem;margin-left:auto" onclick="toggleBulkMode()">Done</button>`;
@@ -1892,37 +1907,101 @@ async function bulkAssignCollection(val) {
   showToast(`Moved ${ids.length} recipe${ids.length!==1?"s":""} to ${name}`);
 }
 
-// Add a category tag to every selected recipe (merged into their existing
-// tags, deduped, capped at 5). "__new" prompts for a tag name.
-async function bulkAddCategory(val) {
-  if (!_bulkSelected.size || val === "") return;
-  let tag = val;
-  if (val === "__new") {
-    tag = await showPrompt("New category tag to add to the selected recipes:", "");
-    if (!tag || !tag.trim()) return;
-    tag = tag.trim();
+// ── Bulk tag menu: add/remove any category tag across selected recipes ──
+function _recipeCats(r) {
+  return (r.categories && r.categories.length) ? r.categories : (r.category ? [r.category] : []);
+}
+function _bulkSelectedRecipes() {
+  return [..._bulkSelected].map(id => savedRecipes.find(r => r.id === id)).filter(Boolean);
+}
+
+function toggleBulkTagMenu(e) {
+  if (e) e.stopPropagation();
+  const menu = document.getElementById("bulk-tag-menu");
+  if (!menu) return;
+  if (menu.hidden) {
+    renderBulkTagMenu();
+    menu.hidden = false;
+    setTimeout(() => document.addEventListener("click", _closeBulkTagMenu, {once:true}), 0);
+  } else {
+    menu.hidden = true;
   }
-  const ids = [..._bulkSelected];
+}
+function _closeBulkTagMenu(e) {
+  const wrap = document.getElementById("bulk-tag-wrap");
+  const menu = document.getElementById("bulk-tag-menu");
+  if (!menu) return;
+  if (wrap && !wrap.contains(e.target)) menu.hidden = true;
+  else document.addEventListener("click", _closeBulkTagMenu, {once:true});
+}
+
+function renderBulkTagMenu() {
+  const list = document.getElementById("bulk-tag-list");
+  if (!list) return;
+  const recs = _bulkSelectedRecipes();
+  const n = recs.length;
+  if (!n) { list.innerHTML = `<div class="bulk-tag-empty">Select some recipes first.</div>`; return; }
+  const tags = [...new Set([
+    ...(savedRecipes || []).flatMap(_recipeCats),
+    ...(savedMeals || []).flatMap(m => m.categories || (m.category ? [m.category] : []))
+  ])].filter(Boolean).sort((a,b) => a.localeCompare(b));
+  if (!tags.length) { list.innerHTML = `<div class="bulk-tag-empty">No tags yet — add one below.</div>`; return; }
+  list.innerHTML = tags.map(t => {
+    const have = recs.filter(r => _recipeCats(r).some(c => c.toLowerCase() === t.toLowerCase())).length;
+    const state = have === n ? "all" : (have === 0 ? "none" : "some");
+    const mark  = state === "all" ? "✓" : (state === "some" ? "–" : "");
+    return `<div class="bulk-tag-item state-${state}" onclick="bulkToggleTag('${t.replace(/'/g,"\\'")}')">
+      <span class="bulk-tag-box">${mark}</span>
+      <span class="bulk-tag-name">${esc(t)}</span>
+      <span class="bulk-tag-count">${have}/${n}</span>
+    </div>`;
+  }).join("");
+}
+
+// Toggle a tag across all selected: if every selected recipe already has it,
+// remove it from all; otherwise add it to all.
+async function bulkToggleTag(tag) {
+  const recs = _bulkSelectedRecipes();
+  if (!recs.length) return;
+  const allHave = recs.every(r => _recipeCats(r).some(c => c.toLowerCase() === tag.toLowerCase()));
+  await _bulkApplyTag(tag, allHave ? "remove" : "add");
+  renderBulkTagMenu();
+}
+
+async function bulkAddNewTag() {
+  const inp = document.getElementById("bulk-tag-new");
+  const tag = (inp?.value || "").trim();
+  if (!tag) return;
+  await _bulkApplyTag(tag, "add");
+  if (inp) inp.value = "";
+  renderBulkTagMenu();
+}
+
+async function _bulkApplyTag(tag, mode) {
+  const recs = _bulkSelectedRecipes();
   const updates = [];
-  ids.forEach(id => {
-    const r = savedRecipes.find(x => x.id === id);
-    if (!r) return;
-    const cur = (r.categories && r.categories.length) ? [...r.categories] : (r.category ? [r.category] : []);
-    if (cur.some(c => c.toLowerCase() === tag.toLowerCase())) return; // already has it
-    if (cur.length >= 5) return;                                       // 5-tag cap
-    const next = [...cur, tag];
-    r.categories = next;                                              // optimistic local update
-    r.category = next[0];
-    updates.push({ id, categories: next });
+  recs.forEach(r => {
+    let cur = _recipeCats(r).slice();
+    const has = cur.some(c => c.toLowerCase() === tag.toLowerCase());
+    if (mode === "add") {
+      if (has || cur.length >= 5) return;   // already has it, or 5-tag cap
+      cur = [...cur, tag];
+    } else {
+      if (!has) return;
+      cur = cur.filter(c => c.toLowerCase() !== tag.toLowerCase());
+    }
+    r.categories = cur;                      // optimistic local update
+    r.category = cur[0] || null;
+    updates.push({ id: r.id, categories: cur });
   });
   renderGrid();
   await Promise.all(updates.map(u => fetch(`/recipes/${u.id}/categories`, {
     method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({categories: u.categories})
   })));
   renderGrid();
-  const skipped = ids.length - updates.length;
-  showToast(`Tagged ${updates.length} recipe${updates.length!==1?"s":""} "${tag}"` +
-            (skipped ? ` (${skipped} already had it or were full)` : ""));
+  if (updates.length) {
+    showToast(`${mode === "add" ? "Added" : "Removed"} "${tag}" ${mode === "add" ? "to" : "from"} ${updates.length} recipe${updates.length!==1?"s":""}`);
+  }
 }
 
 async function bulkExport() {
