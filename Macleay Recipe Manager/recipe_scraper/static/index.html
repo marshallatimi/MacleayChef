@@ -654,7 +654,7 @@
     <div class="section-title" style="display:flex;align-items:center;gap:0.6rem">
       Add to Shopping List
       <button class="btn btn-ghost" style="font-size:0.78rem;padding:0.25rem 0.7rem;margin-left:auto"
-        onclick="addAllMealsToShopping()" title="Testing: add every meal's recipes to the list at their base servings">➕ Add all meals (test)</button>
+        onclick="addAllMealsToShopping()" title="Add every meal's recipes to the shopping list at their base servings">➕ Add all meals</button>
     </div>
     <div class="shop-search-bar">
       <input type="text" id="shop-search" placeholder="Search recipes and meals…" oninput="_dRenderShopBrowser()"/>
@@ -5649,9 +5649,8 @@ async function confirmShopAdd() {
   showToast();
 }
 
-// Testing helper: dump every meal's recipes onto the shopping list at each
-// recipe's own base servings (no per-meal prompt). Handy for quickly loading
-// the list with lots of data to test printing / categories / combining.
+// Add every saved meal's recipes onto the shopping list at each recipe's own
+// base servings (no per-meal prompt) — a quick way to load the whole plan.
 async function addAllMealsToShopping() {
   if (!savedMeals.length) {
     try { savedMeals = await (await fetch("/meals")).json(); } catch {}
