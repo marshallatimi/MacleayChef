@@ -651,7 +651,11 @@
   </div>
 
   <div class="shop-add-card">
-    <div class="section-title">Add to Shopping List</div>
+    <div class="section-title" style="display:flex;align-items:center;gap:0.6rem">
+      Add to Shopping List
+      <button class="btn btn-ghost" style="font-size:0.78rem;padding:0.25rem 0.7rem;margin-left:auto"
+        onclick="addAllMealsToShopping()" title="Testing: add every meal's recipes to the list at their base servings">➕ Add all meals (test)</button>
+    </div>
     <div class="shop-search-bar">
       <input type="text" id="shop-search" placeholder="Search recipes and meals…" oninput="_dRenderShopBrowser()"/>
       <select id="shop-sort-select" onchange="renderShopBrowser()">
@@ -5643,6 +5647,41 @@ async function confirmShopAdd() {
   document.getElementById("shop-add-modal-backdrop").hidden = true;
   renderShoppingList();
   showToast();
+}
+
+// Testing helper: dump every meal's recipes onto the shopping list at each
+// recipe's own base servings (no per-meal prompt). Handy for quickly loading
+// the list with lots of data to test printing / categories / combining.
+async function addAllMealsToShopping() {
+  if (!savedMeals.length) {
+    try { savedMeals = await (await fetch("/meals")).json(); } catch {}
+  }
+  if (!savedRecipes.length) {
+    try { savedRecipes = await (await fetch("/recipes")).json(); } catch {}
+  }
+  if (!savedMeals.length) { showAlert("No meals to add."); return; }
+
+  let addedRecipes = 0;
+  (savedMeals || []).forEach(m => {
+    (m.recipes || []).forEach(mr => {
+      const r = savedRecipes.find(x => x.id === mr.id);
+      if (!r) return;
+      const servings = r.servings_num || parseServingsNumJS(r.servings) || 4;
+      const ig = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
+      const ingredients = ig.flatMap(g => (g.ingredients||[]).map(ing => shopIng(ing)));
+      const servingsLabel = r.servings
+        ? r.servings.replace(/\d+(\.\d+)?/, formatNum(servings))
+        : `${formatNum(servings)} servings`;
+      shoppingList.push({id:r.id, title:r.title, servingsLabel, ingredients,
+                         origServings: servings, currentServings: servings});
+      addedRecipes++;
+    });
+  });
+
+  saveShoppingListToStorage();
+  updateShoppingCount();
+  renderShoppingList();
+  showToast(`Added ${addedRecipes} recipe${addedRecipes!==1?"s":""} from ${savedMeals.length} meal${savedMeals.length!==1?"s":""}`);
 }
 
 function saveShoppingListToStorage() {
