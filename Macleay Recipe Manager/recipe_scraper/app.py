@@ -1093,6 +1093,21 @@ def set_recipe_collection(rid):
     return jsonify({"ok": True, "collection_id": cid})
 
 
+@app.route("/recipes/<int:rid>/categories", methods=["PUT"])
+def set_recipe_categories(rid):
+    """Set a recipe's category tags without touching any other fields
+    (used by bulk-assign). Accepts {"categories": [...]}."""
+    data = request.get_json() or {}
+    cats, category = _categories_payload(data)
+    db = get_db()
+    db.execute(
+        "UPDATE recipes SET category=?, categories=? WHERE id=?",
+        (category, json.dumps(cats) if cats else None, rid),
+    )
+    db.commit()
+    return jsonify({"ok": True, "categories": cats})
+
+
 def parse_text_recipe(text):
     """Parse a plain-text recipe file into a recipe dict.
     Recognises labelled sections (Ingredients:, Instructions:, etc.)

@@ -1841,12 +1841,21 @@ function renderBulkBar() {
   const collOpts = [`<option value="">Assign to collection…</option>`]
     .concat(savedCollections.map(c => `<option value="${c.id}">${esc(c.name)}</option>`))
     .concat([`<option value="__none">Uncategorized</option>`]);
+  // Existing category tags across recipes + meals, plus a "new tag" option
+  const allCats = [...new Set([
+    ...(savedRecipes || []).flatMap(r => r.categories || (r.category ? [r.category] : [])),
+    ...(savedMeals || []).flatMap(m => m.categories || (m.category ? [m.category] : []))
+  ])].filter(Boolean).sort((a,b) => a.localeCompare(b));
+  const tagOpts = [`<option value="">Add tag…</option>`]
+    .concat(allCats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`))
+    .concat([`<option value="__new">＋ New tag…</option>`]);
   bar.innerHTML = `
     <span class="bulk-bar-count">${n} selected</span>
     <button class="coll-bar-btn" onclick="bulkSelectAllVisible()">Select all</button>
     <button class="coll-bar-btn" onclick="bulkClear()" ${n ? "" : "disabled"}>Clear</button>
     <span class="coll-bar-sep"></span>
     <select onchange="bulkAssignCollection(this.value); this.selectedIndex=0" ${n ? "" : "disabled"}>${collOpts.join("")}</select>
+    <select onchange="bulkAddCategory(this.value); this.selectedIndex=0" ${n ? "" : "disabled"} title="Add a category tag to all selected recipes">${tagOpts.join("")}</select>
     <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.4rem 0.9rem" onclick="bulkExport()" ${n ? "" : "disabled"}>💾 Export</button>
     <button class="btn btn-danger" style="font-size:0.85rem;padding:0.4rem 0.9rem" onclick="bulkDelete()" ${n ? "" : "disabled"}>🗑 Delete</button>
     <button class="btn btn-ghost" style="font-size:0.85rem;padding:0.4rem 0.9rem;margin-left:auto" onclick="toggleBulkMode()">Done</button>`;
@@ -1881,6 +1890,39 @@ async function bulkAssignCollection(val) {
   renderGrid();
   const name = cid == null ? "Uncategorized" : (savedCollections.find(c => c.id === cid)?.name || "collection");
   showToast(`Moved ${ids.length} recipe${ids.length!==1?"s":""} to ${name}`);
+}
+
+// Add a category tag to every selected recipe (merged into their existing
+// tags, deduped, capped at 5). "__new" prompts for a tag name.
+async function bulkAddCategory(val) {
+  if (!_bulkSelected.size || val === "") return;
+  let tag = val;
+  if (val === "__new") {
+    tag = await showPrompt("New category tag to add to the selected recipes:", "");
+    if (!tag || !tag.trim()) return;
+    tag = tag.trim();
+  }
+  const ids = [..._bulkSelected];
+  const updates = [];
+  ids.forEach(id => {
+    const r = savedRecipes.find(x => x.id === id);
+    if (!r) return;
+    const cur = (r.categories && r.categories.length) ? [...r.categories] : (r.category ? [r.category] : []);
+    if (cur.some(c => c.toLowerCase() === tag.toLowerCase())) return; // already has it
+    if (cur.length >= 5) return;                                       // 5-tag cap
+    const next = [...cur, tag];
+    r.categories = next;                                              // optimistic local update
+    r.category = next[0];
+    updates.push({ id, categories: next });
+  });
+  renderGrid();
+  await Promise.all(updates.map(u => fetch(`/recipes/${u.id}/categories`, {
+    method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify({categories: u.categories})
+  })));
+  renderGrid();
+  const skipped = ids.length - updates.length;
+  showToast(`Tagged ${updates.length} recipe${updates.length!==1?"s":""} "${tag}"` +
+            (skipped ? ` (${skipped} already had it or were full)` : ""));
 }
 
 async function bulkExport() {
