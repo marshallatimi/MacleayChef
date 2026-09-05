@@ -396,6 +396,9 @@
     .collections-bar { display:flex; flex-wrap:wrap; align-items:center; gap:0.4rem; margin-bottom:0.9rem; }
     .collections-bar:empty { display:none; }
     .coll-check { display:inline-flex; align-items:center; gap:0.4rem; padding:0.28rem 0.7rem; border:1.5px solid var(--border); border-radius:999px; background:var(--card); color:var(--muted); font-size:0.82rem; font-weight:600; cursor:pointer; transition:all 0.12s; white-space:nowrap; user-select:none; }
+    /* Inline collection checklist shown above recipe-search browsers */
+    .coll-inline-bar { display:flex; flex-wrap:wrap; align-items:center; gap:0.35rem; margin-bottom:0.5rem; }
+    .coll-inline-bar:empty { display:none; }
     .coll-check:hover { border-color:var(--red); }
     .coll-check input { cursor:pointer; accent-color:var(--red); margin:0; }
     .coll-check.on { color:var(--text); border-color:var(--red); background:rgba(192,57,43,0.06); }
@@ -679,6 +682,7 @@
         <option value="category">By Category</option>
       </select>
     </div>
+    <div id="shop-coll-bar" class="coll-inline-bar"></div>
     <div id="shop-browser" class="shop-browser"></div>
   </div>
 
@@ -1449,6 +1453,47 @@ function _allCollTokens() {
 
 function _collVisible(token) { return !_hiddenColls.has(token); }
 
+// Is a recipe in a currently-visible collection? (used by every recipe search
+// area so the collection toggles apply consistently across the app)
+function _recipeCollVisible(r) {
+  const token = r.collection_id != null ? String(r.collection_id) : "uncat";
+  return !_hiddenColls.has(token);
+}
+
+// Compact inline collections checklist for the recipe-search areas (shopping
+// list, meal editor, group meal editor). Ticking/unticking updates the same
+// per-cookbook _hiddenColls state used by My Recipes, saved to localStorage.
+function collChecklistBarHTML() {
+  if (!savedCollections.length) return "";
+  const hasUncat = savedRecipes.some(r => r.collection_id == null);
+  const item = (token, name) => {
+    const vis = !_hiddenColls.has(token);
+    return `<label class="coll-check${vis ? " on" : ""}" style="font-size:0.74rem;padding:0.16rem 0.5rem">
+      <input type="checkbox" ${vis ? "checked" : ""} onchange="toggleCollVisEverywhere('${token}')"/>${esc(name)}</label>`;
+  };
+  let h = `<span class="coll-bar-label" style="font-size:0.66rem;margin-right:0.1rem">Show</span>`;
+  h += savedCollections.map(c => item(String(c.id), c.name)).join("");
+  if (hasUncat) h += item("uncat", "Uncategorized");
+  return h;
+}
+function _fillCollBar(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = collChecklistBarHTML();
+}
+
+// Toggle a collection's visibility and refresh every recipe-search view + the
+// My Recipes bar. Guarded so it's safe to call from any tab.
+function toggleCollVisEverywhere(token) {
+  if (_hiddenColls.has(token)) _hiddenColls.delete(token);
+  else _hiddenColls.add(token);
+  _saveCollVis();
+  if (document.getElementById("collections-bar")) renderCollectionsBar();
+  if (!document.getElementById("saved-list-view")?.hidden && document.getElementById("recipe-grid")) renderGrid();
+  if (document.getElementById("shop-browser")) renderShopBrowser();
+  if (document.getElementById("meal-recipe-browser")) renderMealRecipeBrowser();
+  if (document.getElementById("gm-recipe-browser")) renderGroupMealRecipeBrowser();
+}
+
 function renderCollectionsBar() {
   const bar = document.getElementById("collections-bar");
   if (!bar) return;
@@ -2071,6 +2116,9 @@ function backToList() {
   selectedRecipe = null;
   document.getElementById("saved-list-view").hidden = false;
   document.getElementById("saved-detail-view").hidden = true;
+  // Re-render so any edits made in the detail (tags, collection, etc.) show
+  // on the cards immediately instead of only after switching tabs.
+  renderGrid();
   // Restore scroll after the list is visible and laid out again
   requestAnimationFrame(() => window.scrollTo(0, _savedListScrollY));
 }
@@ -2197,31 +2245,23 @@ function addCategoryInput(ctx) {
     }
   }
 
-  async function commitValue(val) {
+  function commitValue(val) {
     val = val.trim();
     list.style.display = "none";
-    if (val) {
-      if (ctx === "saved" && selectedRecipe) {
-        if (!selectedRecipe.categories) selectedRecipe.categories = selectedRecipe.category ? [selectedRecipe.category] : [];
-        if (selectedRecipe.categories.length < 5 && !selectedRecipe.categories.includes(val)) {
-          selectedRecipe.categories.push(val);
-          selectedRecipe.category = selectedRecipe.categories[0];
-          await patchRecipe();
-        }
-        renderSavedDetail();
-      } else if (ctx === "meal" && selectedMeal) {
-        if (!selectedMeal.categories) selectedMeal.categories = selectedMeal.category ? [selectedMeal.category] : [];
-        if (selectedMeal.categories.length < 5 && !selectedMeal.categories.includes(val)) {
-          selectedMeal.categories.push(val);
-          selectedMeal.category = selectedMeal.categories[0];
-          await patchMeal();
-        }
-        renderMealDetail();
+    const target = ctx === "saved" ? selectedRecipe : selectedMeal;
+    let changed = false;
+    if (val && target) {
+      if (!target.categories) target.categories = target.category ? [target.category] : [];
+      if (target.categories.length < 5 && !target.categories.some(c => c.toLowerCase() === val.toLowerCase())) {
+        target.categories.push(val);
+        target.category = target.categories[0];
+        changed = true;
       }
-    } else {
-      if (ctx === "saved") renderSavedDetail();
-      else renderMealDetail();
     }
+    // Re-render the detail IMMEDIATELY so the new tag shows at once, then save
+    // in the background (patch does several network fetches — don't block on it).
+    if (ctx === "saved") { renderSavedDetail(); if (changed) patchRecipe(); }
+    else                 { renderMealDetail();  if (changed) patchMeal();  }
   }
 
   inp.addEventListener("input", () => renderList(inp.value));
@@ -2266,19 +2306,19 @@ function addCategoryInput(ctx) {
   renderList("");
 }
 
-async function removeCategory(ctx, idx) {
+function removeCategory(ctx, idx) {
   if (ctx === "saved" && selectedRecipe) {
     if (!selectedRecipe.categories) selectedRecipe.categories = selectedRecipe.category ? [selectedRecipe.category] : [];
     selectedRecipe.categories.splice(idx, 1);
     selectedRecipe.category = selectedRecipe.categories[0] || null;
-    await patchRecipe();
-    renderSavedDetail();
+    renderSavedDetail();   // remove it from view instantly
+    patchRecipe();         // save in the background
   } else if (ctx === "meal" && selectedMeal) {
     if (!selectedMeal.categories) selectedMeal.categories = selectedMeal.category ? [selectedMeal.category] : [];
     selectedMeal.categories.splice(idx, 1);
     selectedMeal.category = selectedMeal.categories[0] || null;
-    await patchMeal();
     renderMealDetail();
+    patchMeal();
   }
 }
 
@@ -5421,6 +5461,7 @@ function renderMealDetail() {
       <div class="shop-search-bar" style="margin-bottom:0.5rem">
         <input type="text" id="meal-recipe-search" placeholder="Search recipes…" oninput="renderMealRecipeBrowser()"/>
       </div>
+      <div id="meal-recipe-coll-bar" class="coll-inline-bar"></div>
       <div id="meal-recipe-browser" class="shop-browser" style="max-height:280px"></div>
     </div>` : `<p style="font-size:0.82rem;color:var(--muted);margin-top:0.6rem">All saved recipes are already in this meal.</p>`;
 
@@ -5489,9 +5530,10 @@ function renderMealDetail() {
 function renderMealRecipeBrowser() {
   const browser = document.getElementById("meal-recipe-browser");
   if (!browser || !selectedMeal) return;
+  _fillCollBar("meal-recipe-coll-bar");
   const inMealIds = new Set(selectedMeal.recipes.map(r => r.id));
   const q = (document.getElementById("meal-recipe-search")?.value || "").toLowerCase().trim();
-  let list = savedRecipes.filter(r => !inMealIds.has(r.id));
+  let list = savedRecipes.filter(r => !inMealIds.has(r.id) && _recipeCollVisible(r));
   if (q) list = list.filter(r =>
     r.title.toLowerCase().includes(q) ||
     (r.category||"").toLowerCase().includes(q) ||
@@ -5648,11 +5690,13 @@ async function deleteMealById(id, e, fromDetail=false) {
 function renderShopBrowser() {
   const browser = document.getElementById("shop-browser");
   if (!browser) return;
+  _fillCollBar("shop-coll-bar");
   const q = (document.getElementById("shop-search")?.value || "").toLowerCase().trim();
   const sort = document.getElementById("shop-sort-select")?.value || "az";
 
+  // Recipes are filtered by the visible collections; meals always show.
   let items = [
-    ...savedRecipes.map(r => ({type:"recipe", id:r.id, title:r.title, image:r.image, meta:fmtServings(r.servings), category:r.category||"", data:r})),
+    ...savedRecipes.filter(_recipeCollVisible).map(r => ({type:"recipe", id:r.id, title:r.title, image:r.image, meta:fmtServings(r.servings), category:r.category||"", data:r})),
     ...savedMeals.map(m => ({type:"meal", id:m.id, title:m.name, image:(m.recipes.find(r=>r.image)||{}).image||null, meta:m.recipes.length+" recipe"+(m.recipes.length===1?"":"s"), category:"", data:m}))
   ];
 
@@ -6981,6 +7025,7 @@ function renderGroupMealDetail() {
               onclick="_gmClearSearch('gm-recipe-search','recipe')" title="Clear search">✕</button>
           </div>
         </div>
+        <div id="gm-recipe-coll-bar" class="coll-inline-bar"></div>
         <div id="gm-recipe-browser" class="shop-browser" style="max-height:240px"></div>
       </div>` : ""}
     </div>`;
@@ -7225,10 +7270,12 @@ async function addMealToGroupMeal(mealId) {
 function renderGroupMealRecipeBrowser() {
   const browser = document.getElementById("gm-recipe-browser");
   if (!browser || !selectedGroupMeal) return;
+  _fillCollBar("gm-recipe-coll-bar");
   const q = (document.getElementById("gm-recipe-search")?.value || "").toLowerCase();
   const catFilter = document.getElementById("gm-recipe-cat-filter")?.value || "";
   _gmRecipeCatFilter = catFilter; // remember selection across re-renders
   const matches = savedRecipes.filter(r => {
+    if (!_recipeCollVisible(r)) return false;
     if (q && !(r.title||"").toLowerCase().includes(q)) return false;
     if (catFilter) {
       const rCats = r.categories || (r.category ? [r.category] : []);
