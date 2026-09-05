@@ -93,7 +93,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,   # UPX packing is a major trigger for antivirus false positives
+                 # (e.g. Defender's Trojan:Win32/Kepavll!rfn on PyInstaller apps)
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
