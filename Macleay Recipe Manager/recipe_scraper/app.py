@@ -356,10 +356,11 @@ def init_db():
                 PRIMARY KEY (meal_id, recipe_id)
             )
         """)
-        try:
-            conn.execute("ALTER TABLE meal_recipes ADD COLUMN servings REAL DEFAULT NULL")
-        except Exception:
-            pass
+        for col in ["servings REAL DEFAULT NULL", "dietary INTEGER DEFAULT 0"]:
+            try:
+                conn.execute(f"ALTER TABLE meal_recipes ADD COLUMN {col}")
+            except Exception:
+                pass
         # Indexes for faster list queries
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_recipes_created ON recipes(created_at DESC)",
@@ -379,7 +380,8 @@ def init_db():
             )
         """)
         for col in ["default_servings REAL DEFAULT NULL", "image TEXT DEFAULT NULL",
-                    "hidden INTEGER DEFAULT 0"]:
+                    "hidden INTEGER DEFAULT 0", "dietary_enabled INTEGER DEFAULT 0",
+                    "dietary_default_servings REAL DEFAULT NULL"]:
             try: conn.execute(f"ALTER TABLE group_meals ADD COLUMN {col}")
             except Exception: pass
         # group_meal_members – must allow the same meal multiple times in one group.
@@ -465,6 +467,14 @@ def init_db():
                     section_title   TEXT    DEFAULT NULL
                 )
             """)
+
+        # Columns added after group_meal_members existed — apply in every branch
+        # (fresh, migrated, or already-migrated).
+        for col in ["dietary_servings REAL DEFAULT NULL"]:
+            try:
+                conn.execute(f"ALTER TABLE group_meal_members ADD COLUMN {col}")
+            except Exception:
+                pass
 
         # Shopping settings stored inside the cookbook so they travel with it
         conn.execute("""
@@ -1956,7 +1966,7 @@ def list_meals():
     placeholders = ",".join("?" * len(meal_ids))
     all_recipes = db.execute(
         f"""SELECT mr.meal_id, r.id, r.title, r.servings, r.servings_num, r.image,
-                   r.scale_by_batch, mr.servings AS recipe_servings
+                   r.scale_by_batch, mr.servings AS recipe_servings, mr.dietary AS dietary
             FROM meal_recipes mr JOIN recipes r ON r.id = mr.recipe_id
             WHERE mr.meal_id IN ({placeholders}) ORDER BY mr.meal_id, mr.sort_order""",
         meal_ids,
@@ -2047,8 +2057,8 @@ def restore_meal(mid):
     ))
     for i, r in enumerate(data.get("recipes", [])):
         db.execute(
-            "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, servings) VALUES (?,?,?,?)",
-            (mid, r["id"], i, r.get("recipe_servings")),
+            "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, servings, dietary) VALUES (?,?,?,?,?)",
+            (mid, r["id"], i, r.get("recipe_servings"), 1 if r.get("dietary") else 0),
         )
     db.commit()
     return jsonify({"ok": True, "id": mid})
@@ -2070,9 +2080,10 @@ def copy_meal(mid):
     # Copy all recipe associations
     recipes = db.execute("SELECT * FROM meal_recipes WHERE meal_id=?", (mid,)).fetchall()
     for r in recipes:
+        rd = dict(r)
         db.execute(
-            "INSERT INTO meal_recipes (meal_id, recipe_id, sort_order, servings) VALUES (?,?,?,?)",
-            (new_id, r["recipe_id"], r["sort_order"], r["servings"])
+            "INSERT INTO meal_recipes (meal_id, recipe_id, sort_order, servings, dietary) VALUES (?,?,?,?,?)",
+            (new_id, rd["recipe_id"], rd["sort_order"], rd["servings"], rd.get("dietary", 0))
         )
     db.commit()
     # Return the new meal
@@ -2081,7 +2092,7 @@ def copy_meal(mid):
     meal_dict["categories"] = _parse_categories(meal_dict)
     meal_dict["recipes"] = [dict(r) for r in db.execute(
         """SELECT r.id, r.title, r.servings, r.servings_num, r.image, r.scale_by_batch,
-                  mr.servings AS recipe_servings
+                  mr.servings AS recipe_servings, mr.dietary AS dietary
            FROM meal_recipes mr JOIN recipes r ON r.id = mr.recipe_id
            WHERE mr.meal_id = ? ORDER BY mr.sort_order""", (new_id,)
     ).fetchall()]
@@ -2092,6 +2103,7 @@ def copy_meal(mid):
 def add_recipe_to_meal(mid):
     data = request.get_json()
     rid = data.get("recipe_id")
+    dietary = 1 if data.get("dietary") else 0
     db = get_db()
     try:
         # Assign the next sort_order so new recipes always append in addition order,
@@ -2101,8 +2113,8 @@ def add_recipe_to_meal(mid):
         ).fetchone()
         next_order = (row[0] if row else -1) + 1
         db.execute(
-            "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order) VALUES (?,?,?)",
-            (mid, rid, next_order)
+            "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, dietary) VALUES (?,?,?,?)",
+            (mid, rid, next_order, dietary)
         )
         db.commit()
     except Exception:
@@ -2156,7 +2168,7 @@ def list_group_meals():
         f"""SELECT gm.group_id, gm.row_id AS slot_id,
                    gm.meal_id, m.name AS meal_name,
                    gm.recipe_id, r.title AS recipe_title,
-                   gm.servings, gm.recipe_servings, gm.section_title
+                   gm.servings, gm.recipe_servings, gm.section_title, gm.dietary_servings
             FROM group_meal_members gm
             LEFT JOIN meals   m ON m.id = gm.meal_id
             LEFT JOIN recipes r ON r.id = gm.recipe_id
@@ -2203,24 +2215,27 @@ def create_group_meal():
 
 @app.route("/group-meals/<int:gid>", methods=["PUT"])
 def update_group_meal(gid):
-    data = request.get_json()
+    data = request.get_json() or {}
     db = get_db()
-    # Partial update: only "hidden" was sent (hide/show toggle) — don't touch
-    # name or default_servings.
-    if "hidden" in data and "name" not in data:
-        db.execute("UPDATE group_meals SET hidden=? WHERE id=?",
-                   (1 if data.get("hidden") else 0, gid))
-        db.commit()
-        return jsonify({"ok": True})
-    ds = data.get("default_servings")
-    ds = float(ds) if ds not in (None, "", "null") else None
+    # Partial update: only touch columns actually present in the payload so a
+    # small update (e.g. just the dietary toggle) can't clear name/servings.
+    def _num(v):
+        return float(v) if v not in (None, "", "null") else None
+    sets, vals = [], []
+    if "name" in data:
+        sets.append("name=?"); vals.append(data.get("name"))
+    if "default_servings" in data:
+        sets.append("default_servings=?"); vals.append(_num(data.get("default_servings")))
     if "hidden" in data:
-        db.execute("UPDATE group_meals SET name=?, default_servings=?, hidden=? WHERE id=?",
-                   (data.get("name"), ds, 1 if data.get("hidden") else 0, gid))
-    else:
-        db.execute("UPDATE group_meals SET name=?, default_servings=? WHERE id=?",
-                   (data.get("name"), ds, gid))
-    db.commit()
+        sets.append("hidden=?"); vals.append(1 if data.get("hidden") else 0)
+    if "dietary_enabled" in data:
+        sets.append("dietary_enabled=?"); vals.append(1 if data.get("dietary_enabled") else 0)
+    if "dietary_default_servings" in data:
+        sets.append("dietary_default_servings=?"); vals.append(_num(data.get("dietary_default_servings")))
+    if sets:
+        vals.append(gid)
+        db.execute(f"UPDATE group_meals SET {', '.join(sets)} WHERE id=?", vals)
+        db.commit()
     return jsonify({"ok": True})
 
 
@@ -2302,6 +2317,14 @@ def patch_group_meal_member(gid, slot_id):
             db.execute("UPDATE group_meal_members SET section_title=? WHERE row_id=? AND group_id=?",
                        (title, slot_id, gid))
             db.commit()
+        return jsonify({"ok": True})
+    # Per-meal dietary default servings (its own control, sent on its own)
+    if "dietary_servings" in data and "servings" not in data:
+        dv = data.get("dietary_servings")
+        dv = float(dv) if dv not in (None, "", "null") else None
+        db.execute("UPDATE group_meal_members SET dietary_servings=? WHERE row_id=? AND group_id=?",
+                   (dv, slot_id, gid))
+        db.commit()
         return jsonify({"ok": True})
     srv = data.get("servings")
     srv = float(srv) if srv not in (None, "", "null") else None
@@ -2978,9 +3001,10 @@ def merge_cookbook():
                 tgt_rid = ensure_recipe(mr.get("recipe_id"))
                 if tgt_rid is not None:
                     db.execute(
-                        "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, servings) "
-                        "VALUES (?,?,?,?)",
-                        (new_mid, tgt_rid, mr.get("sort_order") or 0, mr.get("servings")),
+                        "INSERT OR IGNORE INTO meal_recipes (meal_id, recipe_id, sort_order, servings, dietary) "
+                        "VALUES (?,?,?,?,?)",
+                        (new_mid, tgt_rid, mr.get("sort_order") or 0, mr.get("servings"),
+                         mr.get("dietary") or 0),
                     )
             return new_mid
 
@@ -3022,8 +3046,10 @@ def merge_cookbook():
                 if gkey in existing_group_names:
                     continue  # additive only: skip groups that already exist by name
                 cur = db.execute(
-                    "INSERT INTO group_meals (name, default_servings, image) VALUES (?,?,?)",
-                    (sg.get("name") or "Untitled group", sg.get("default_servings"), sg.get("image")),
+                    "INSERT INTO group_meals (name, default_servings, image, dietary_enabled, dietary_default_servings) "
+                    "VALUES (?,?,?,?,?)",
+                    (sg.get("name") or "Untitled group", sg.get("default_servings"), sg.get("image"),
+                     sg.get("dietary_enabled") or 0, sg.get("dietary_default_servings")),
                 )
                 new_gid = cur.lastrowid
                 existing_group_names.add(gkey)
@@ -3056,10 +3082,11 @@ def merge_cookbook():
                         if tgt_mid is not None:
                             db.execute(
                                 "INSERT INTO group_meal_members "
-                                "(group_id, meal_id, servings, sort_order, recipe_servings) "
-                                "VALUES (?,?,?,?,?)",
+                                "(group_id, meal_id, servings, sort_order, recipe_servings, dietary_servings) "
+                                "VALUES (?,?,?,?,?,?)",
                                 (new_gid, tgt_mid, gmm.get("servings"), sort_order,
-                                 _remap_recipe_servings(gmm.get("recipe_servings"))),
+                                 _remap_recipe_servings(gmm.get("recipe_servings")),
+                                 gmm.get("dietary_servings")),
                             )
 
     db.commit()
