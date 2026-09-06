@@ -1001,8 +1001,14 @@ def recipe_image_raw(rid):
     if m:
         try:
             data = base64.b64decode(m.group(2))
+            # When called with a version tag (?v=<updated_at>), the URL changes
+            # whenever the photo changes, so the bytes can be cached forever —
+            # this stops the browser re-downloading thumbnails on every grid
+            # re-render/tab switch. Without a tag, stay uncached to be safe.
+            cache = ("public, max-age=31536000, immutable"
+                     if request.args.get("v") else "no-cache")
             return Response(data, mimetype=m.group(1),
-                            headers={"Cache-Control": "no-cache"})
+                            headers={"Cache-Control": cache})
         except Exception:
             return ("", 404)
     # Non-data-URI (external URL or legacy path) — redirect the browser to it
@@ -1801,13 +1807,13 @@ def update_image(rid):
         f = request.files["file"]
         if f and f.filename:
             data_uri = _image_file_to_data_uri(f)
-            db.execute("UPDATE recipes SET image=? WHERE id=?", (data_uri, rid))
+            db.execute("UPDATE recipes SET image=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (data_uri, rid))
             db.commit()
             return jsonify({"image": data_uri})
     data = request.get_json(silent=True) or {}
     url = data.get("url", "").strip()
     if url:
-        db.execute("UPDATE recipes SET image=? WHERE id=?", (url, rid))
+        db.execute("UPDATE recipes SET image=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (url, rid))
         db.commit()
         return jsonify({"image": url})
     return jsonify({"error": "No image provided"}), 400
@@ -1964,8 +1970,12 @@ def list_meals():
     # Batch-fetch all meal_recipes in one query instead of N+1
     meal_ids = [m["id"] for m in meals]
     placeholders = ",".join("?" * len(meal_ids))
+    # Omit the base64 image (it repeats per recipe across meals and bloats the
+    # payload); the meal detail loads each thumbnail lazily via image-raw using
+    # has_image + updated_at, exactly like the recipe grid.
     all_recipes = db.execute(
-        f"""SELECT mr.meal_id, r.id, r.title, r.servings, r.servings_num, r.image,
+        f"""SELECT mr.meal_id, r.id, r.title, r.servings, r.servings_num,
+                   (r.image IS NOT NULL AND r.image != '') AS has_image, r.updated_at, r.created_at,
                    r.scale_by_batch, mr.servings AS recipe_servings, mr.dietary AS dietary
             FROM meal_recipes mr JOIN recipes r ON r.id = mr.recipe_id
             WHERE mr.meal_id IN ({placeholders}) ORDER BY mr.meal_id, mr.sort_order""",

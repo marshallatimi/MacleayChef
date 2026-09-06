@@ -376,7 +376,8 @@
     .gm-recipe-row:last-child { border-bottom:none; }
     .gm-recipe-name { flex:1; font-size:0.85rem; }
     .gm-srv-label { font-size:0.75rem; color:var(--muted); white-space:nowrap; }
-    .gm-srv-input { width:130px; padding:0.2rem 0.35rem; border:1px solid var(--border); border-radius:5px; background:var(--input-bg,var(--card)); color:var(--text); font-size:0.8rem; }
+    .gm-srv-input { width:172px; padding:0.2rem 0.5rem; border:1px solid var(--border); border-radius:5px; background:var(--input-bg,var(--card)); color:var(--text); font-size:0.8rem; }
+    .gm-srv-input::placeholder { font-size:0.74rem; }
     .meal-recipe-thumb { width:52px; height:52px; object-fit:cover; border-radius:6px; flex-shrink:0; }
     .meal-recipe-thumb-placeholder { width:52px; height:52px; background:#f0e9e9; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.4rem; flex-shrink:0; }
     .meal-recipe-info { flex:1; min-width:0; }
@@ -1800,7 +1801,14 @@ function _recipeCollName(r) {
 // carries a full image (e.g. just after editing), use that directly.
 function _recipeThumbSrc(r) {
   if (r.image) return r.image;                 // full data URI present
-  if (r.image === undefined && r.has_image) return `/recipes/${r.id}/image-raw`;
+  if (r.image === undefined && r.has_image) {
+    // Version the URL by updated_at (or created_at for never-edited recipes) so
+    // it caches forever but refreshes the moment the photo changes (see
+    // image-raw's Cache-Control handling).
+    const ver = r.updated_at || r.created_at;
+    const v = ver ? `?v=${encodeURIComponent(ver)}` : "";
+    return `/recipes/${r.id}/image-raw${v}`;
+  }
   return null;                                  // no image (or explicitly removed)
 }
 
@@ -2416,7 +2424,7 @@ function _rpEffServings(r) {
     const mr = full && (full.recipes||[]).find(x => x.id === r.id);
     if (mr && mr.dietary) {
       if (slot.dietary_servings != null) return slot.dietary_servings;
-      return g.dietary_default_servings != null ? g.dietary_default_servings : null;
+      return g.dietary_default_servings != null ? g.dietary_default_servings : 0;
     }
     if (slot.servings != null) return slot.servings;
   }
@@ -2438,7 +2446,7 @@ function _rpGmServingsRow(r) {
     const mr = full && (full.recipes||[]).find(x => x.id === r.id);
     const effBase = (mr && mr.dietary)
       ? (slot.dietary_servings != null ? slot.dietary_servings
-         : (g.dietary_default_servings != null ? g.dietary_default_servings : null))
+         : (g.dietary_default_servings != null ? g.dietary_default_servings : 0))
       : (slot.servings != null ? slot.servings
          : (g.default_servings != null ? g.default_servings : null));
     ph  = effBase != null ? `Meal default (${effBase})` : "Servings…";
@@ -5477,6 +5485,7 @@ function backToMealsList() {
 function _mealRecipeRowHTML(r, m) {
   const defPlaceholder = m.default_servings != null ? `Default (${m.default_servings})` : "Servings…";
   const curSrv = r.recipe_servings != null ? r.recipe_servings : "";
+  const thumb = _recipeThumbSrc(r);
   return `
         <div class="meal-recipe-row gm-meal-block" draggable="true"
           ondragstart="_mealRecipeDragStart(event,${r.id})"
@@ -5486,8 +5495,8 @@ function _mealRecipeRowHTML(r, m) {
           ondragend="_mealRecipeDragEnd(event)"
           style="display:flex;align-items:center;gap:0.5rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid var(--border)">
           <span class="gm-drag-handle" style="padding:0 0.15rem;flex-shrink:0" onclick="event.stopPropagation()">⠿</span>
-          ${r.image
-            ? `<img src="${esc(r.image)}" class="meal-recipe-thumb" style="flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openRecipePreview(${r.id})"/>`
+          ${thumb
+            ? `<img src="${esc(thumb)}" class="meal-recipe-thumb" loading="lazy" style="flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openRecipePreview(${r.id})"/>`
             : `<div class="meal-recipe-thumb meal-recipe-thumb-placeholder" style="flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openRecipePreview(${r.id})">🍽️</div>`}
           <div class="meal-recipe-info" style="flex:1;min-width:0;cursor:pointer" title="Click to preview recipe"
             onclick="event.stopPropagation();openRecipePreview(${r.id})">
@@ -5637,8 +5646,9 @@ function renderMealRecipeBrowser() {
     return;
   }
   browser.innerHTML = list.map(r => {
-    const thumb = r.image
-      ? `<img src="${esc(r.image)}" alt="${esc(r.title)}" style="width:100%;height:90px;object-fit:cover;display:block"/>`
+    const src = _recipeThumbSrc(r);
+    const thumb = src
+      ? `<img src="${esc(src)}" alt="${esc(r.title)}" loading="lazy" style="width:100%;height:90px;object-fit:cover;display:block"/>`
       : `<div style="width:100%;height:90px;background:#f0e9e9;display:flex;align-items:center;justify-content:center;font-size:1.8rem">🥘</div>`;
     const badge = r.category ? `<span class="grid-cat-badge">${esc(r.category)}</span> ` : "";
     return `<div class="shop-browser-card" onclick="addRecipeToMealById(${r.id})">
@@ -5669,8 +5679,9 @@ function renderMealDietaryBrowser() {
     return;
   }
   browser.innerHTML = list.map(r => {
-    const thumb = r.image
-      ? `<img src="${esc(r.image)}" alt="${esc(r.title)}" style="width:100%;height:90px;object-fit:cover;display:block"/>`
+    const src = _recipeThumbSrc(r);
+    const thumb = src
+      ? `<img src="${esc(src)}" alt="${esc(r.title)}" loading="lazy" style="width:100%;height:90px;object-fit:cover;display:block"/>`
       : `<div style="width:100%;height:90px;background:#f0e9e9;display:flex;align-items:center;justify-content:center;font-size:1.8rem">🥘</div>`;
     const badge = r.category ? `<span class="grid-cat-badge">${esc(r.category)}</span> ` : "";
     return `<div class="shop-browser-card" onclick="addRecipeToMealById(${r.id}, true)">
@@ -5693,7 +5704,7 @@ async function addRecipeToMealById(rid, dietary) {
   await fetch(`/meals/${selectedMeal.id}/recipes`, {
     method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({recipe_id:rid, dietary})
   });
-  selectedMeal.recipes.push({id:recipe.id, title:recipe.title, servings:recipe.servings, servings_num:recipe.servings_num, image:recipe.image, dietary:dietary?1:0});
+  selectedMeal.recipes.push({id:recipe.id, title:recipe.title, servings:recipe.servings, servings_num:recipe.servings_num, image:recipe.image, has_image:recipe.has_image, updated_at:recipe.updated_at, dietary:dietary?1:0});
   const idx = savedMeals.findIndex(m => m.id === selectedMeal.id);
   if (idx !== -1) savedMeals[idx] = {...selectedMeal, recipes:[...selectedMeal.recipes]};
   updateMealsCount();
@@ -7076,8 +7087,10 @@ function renderGroupMealDetail() {
 
         const effBase = m.servings != null ? m.servings
                       : (g.default_servings != null ? g.default_servings : null);
+        // Dietary recipes default to 0 (excluded) unless a dietary default is set
+        // at the meal or group level — a positive number opts them in.
         const dietBase = m.dietary_servings != null ? m.dietary_servings
-                       : (g.dietary_default_servings != null ? g.dietary_default_servings : null);
+                       : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
 
         const gmRow = (r, base) => {
           const rph  = rs[r.id] != null ? String(rs[r.id])
@@ -7102,7 +7115,7 @@ function renderGroupMealDetail() {
         let dietBlock = "";
         if (showDiet) {
           const dsPh2 = m.dietary_servings != null ? String(m.dietary_servings)
-                      : (g.dietary_default_servings != null ? `Group dietary default (${g.dietary_default_servings})` : "Servings…");
+                      : `Group dietary default (${g.dietary_default_servings != null ? g.dietary_default_servings : 0})`;
           const dsVal2 = m.dietary_servings != null ? m.dietary_servings : "";
           const dietRows = dietaryR.map(r => gmRow(r, dietBase)).join("");
           dietBlock = `
@@ -7221,12 +7234,12 @@ function renderGroupMealDetail() {
         </label>
         ${g.dietary_enabled ? `
         <label style="font-size:0.85rem;color:var(--muted);white-space:nowrap;margin-left:0.4rem">Dietary default servings:</label>
-        <input type="number" min="0.5" step="0.5" id="gm-dietary-default-servings"
-          style="width:80px;padding:0.25rem 0.4rem;border:1px solid var(--border);border-radius:6px;background:var(--input-bg,var(--card));color:var(--text);font-size:0.85rem"
-          placeholder="e.g. 4" value="${g.dietary_default_servings != null ? g.dietary_default_servings : ""}"
-          title="Default servings for every dietary recipe (can be overridden per meal / per recipe)"
+        <input type="number" min="0" step="0.5" id="gm-dietary-default-servings"
+          style="width:90px;padding:0.25rem 0.4rem;border:1px solid var(--border);border-radius:6px;background:var(--input-bg,var(--card));color:var(--text);font-size:0.85rem"
+          placeholder="0 (excluded)" value="${g.dietary_default_servings != null ? g.dietary_default_servings : ""}"
+          title="Default servings for every dietary recipe. Defaults to 0 (excluded) — set a number to include them (can be overridden per meal / per recipe)."
           onchange="updateGroupDietaryDefaultServings(this.value)"/>
-        <span style="font-size:0.78rem;color:var(--muted)">Override per meal below ↓</span>
+        <span style="font-size:0.78rem;color:var(--muted)">Defaults to 0 — override per meal below ↓</span>
         ` : `<span style="font-size:0.78rem;color:var(--muted)">Turn on to add each meal's dietary recipes to this group meal.</span>`}
       </div>
       <div class="section-title" style="margin-top:1rem;display:flex;align-items:center;gap:0.6rem">
@@ -7383,7 +7396,10 @@ async function toggleGroupDietary(checked) {
 async function updateGroupDietaryDefaultServings(val) {
   const g = selectedGroupMeal;
   if (!g) return;
-  const ds = val && parseFloat(val) > 0 ? parseFloat(val) : null;
+  // Accept 0 (keep dietary recipes excluded) as an explicit value; blank clears
+  // back to the implicit default of 0.
+  const parsed = parseFloat(val);
+  const ds = (val !== "" && val != null && !isNaN(parsed) && parsed >= 0) ? parsed : null;
   g.dietary_default_servings = ds;
   renderGroupMealDetail();
   await fetch(`/group-meals/${g.id}`, {
@@ -7722,7 +7738,7 @@ function _groupAllRecipes() {
                        : (g.default_servings != null ? g.default_servings : null);
     if (mealServings !== null && parseFloat(mealServings) === 0) return; // skip entire meal
     const dietBase = gm.dietary_servings != null ? gm.dietary_servings
-                   : (g.dietary_default_servings != null ? g.dietary_default_servings : null);
+                   : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
     (full.recipes||[]).forEach(mr => {
       if (mr.dietary && !g.dietary_enabled) return; // dietary recipes excluded when toggle is off
       const base = mr.dietary ? dietBase : mealServings;
@@ -7811,7 +7827,7 @@ function buildShoppingHtmlByMeal(g) {
     const mealServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
     if (mealServings !== null && parseFloat(mealServings) === 0) return;
     const dietBase = gm.dietary_servings != null ? gm.dietary_servings
-                   : (g.dietary_default_servings != null ? g.dietary_default_servings : null);
+                   : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
     const ings = [];
     full.recipes.forEach(mr => {
       if (mr.dietary && !g.dietary_enabled) return; // dietary recipes excluded when toggle is off
