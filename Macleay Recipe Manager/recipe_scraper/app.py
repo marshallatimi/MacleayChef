@@ -483,6 +483,21 @@ def init_db():
                 value TEXT NOT NULL DEFAULT '{}'
             )
         """)
+        # Serving-line layout diagrams (drag-and-drop line setups). `data` holds
+        # the full layout JSON; meal_id optionally ties a diagram to a meal.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS line_diagrams (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL,
+                data       TEXT DEFAULT '{}',
+                meal_id    INTEGER DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT NULL
+            )
+        """)
+        for col in ["meal_id INTEGER DEFAULT NULL", "updated_at TIMESTAMP DEFAULT NULL"]:
+            try: conn.execute(f"ALTER TABLE line_diagrams ADD COLUMN {col}")
+            except Exception: pass
         # One-time migration: populate directions_text from instruction_groups / instructions
         # for any recipe that has structured steps but no plain-text directions yet.
         # Note: init_db uses a plain sqlite3 connection (no row_factory), so rows are tuples.
@@ -2373,6 +2388,100 @@ def reorder_group_meal_slots(gid):
     return jsonify({"ok": True})
 
 
+# ── Serving-line diagrams ──────────────────────────────────────────────────────
+@app.route("/line-diagrams", methods=["GET"])
+def list_line_diagrams():
+    """Lightweight list (no data blob). Optional ?meal_id= filter."""
+    db = get_db()
+    meal_id = request.args.get("meal_id")
+    sql = ("SELECT d.id, d.name, d.meal_id, d.created_at, d.updated_at, m.name AS meal_name "
+           "FROM line_diagrams d LEFT JOIN meals m ON m.id = d.meal_id")
+    params = ()
+    if meal_id not in (None, ""):
+        sql += " WHERE d.meal_id=?"
+        params = (meal_id,)
+    sql += " ORDER BY d.created_at DESC"
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/line-diagrams", methods=["POST"])
+def create_line_diagram():
+    data = request.get_json() or {}
+    name = (data.get("name") or "New Line Setup").strip() or "New Line Setup"
+    meal_id = data.get("meal_id")
+    meal_id = int(meal_id) if meal_id not in (None, "", "null") else None
+    blob = json.dumps(data.get("data")) if isinstance(data.get("data"), (dict, list)) else "{}"
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO line_diagrams (name, data, meal_id, updated_at) "
+        "VALUES (?,?,?,CURRENT_TIMESTAMP)", (name, blob, meal_id))
+    db.commit()
+    return jsonify({"id": cur.lastrowid, "name": name, "meal_id": meal_id,
+                    "data": json.loads(blob)}), 201
+
+
+@app.route("/line-diagrams/<int:did>", methods=["GET"])
+def get_line_diagram(did):
+    row = get_db().execute("SELECT * FROM line_diagrams WHERE id=?", (did,)).fetchone()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    d = dict(row)
+    try:
+        d["data"] = json.loads(d.get("data") or "{}")
+    except Exception:
+        d["data"] = {}
+    return jsonify(d)
+
+
+@app.route("/line-diagrams/<int:did>", methods=["PUT"])
+def update_line_diagram(did):
+    data = request.get_json() or {}
+    db = get_db()
+    sets, vals = [], []
+    if "name" in data:
+        sets.append("name=?"); vals.append((data.get("name") or "Untitled").strip() or "Untitled")
+    if "meal_id" in data:
+        mid = data.get("meal_id")
+        sets.append("meal_id=?"); vals.append(int(mid) if mid not in (None, "", "null") else None)
+    if "data" in data:
+        sets.append("data=?"); vals.append(json.dumps(data.get("data")) if isinstance(data.get("data"), (dict, list)) else "{}")
+    if sets:
+        sets.append("updated_at=CURRENT_TIMESTAMP")
+        vals.append(did)
+        db.execute(f"UPDATE line_diagrams SET {', '.join(sets)} WHERE id=?", vals)
+        db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/line-diagrams/<int:did>", methods=["DELETE"])
+def delete_line_diagram(did):
+    db = get_db()
+    db.execute("DELETE FROM line_diagrams WHERE id=?", (did,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/line-diagrams/<int:did>/copy", methods=["POST"])
+def copy_line_diagram(did):
+    db = get_db()
+    row = db.execute("SELECT * FROM line_diagrams WHERE id=?", (did,)).fetchone()
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    cur = db.execute(
+        "INSERT INTO line_diagrams (name, data, meal_id, updated_at) "
+        "VALUES (?,?,?,CURRENT_TIMESTAMP)",
+        (f"{row['name']} (copy)", row["data"], row["meal_id"]))
+    db.commit()
+    new = db.execute("SELECT * FROM line_diagrams WHERE id=?", (cur.lastrowid,)).fetchone()
+    d = dict(new)
+    try:
+        d["data"] = json.loads(d.get("data") or "{}")
+    except Exception:
+        d["data"] = {}
+    return jsonify(d), 201
+
+
 @app.route("/cookbooks/mtime")
 def cookbook_mtime():
     """Modification time of the active cookbook file. Used by the frontend to
@@ -2834,6 +2943,7 @@ def merge_cookbook():
     add_new          = bool(data.get("add_new",             True))
     merge_meals      = bool(data.get("merge_meals",         True))
     merge_groups     = bool(data.get("merge_groups",        True))
+    merge_diagrams   = bool(data.get("merge_diagrams",      True))
 
     # ── Read source cookbook (recipes + meals + group meals) ─────────────────
     def _read_all(conn, table):
@@ -2850,6 +2960,7 @@ def merge_cookbook():
         src_meal_recipes     = _read_all(src_conn, "meal_recipes")
         src_groups           = _read_all(src_conn, "group_meals")
         src_group_members    = _read_all(src_conn, "group_meal_members")
+        src_line_diagrams    = _read_all(src_conn, "line_diagrams")
     except Exception as e:
         return jsonify({"error": f"Could not read source cookbook: {e}"}), 400
     finally:
@@ -3099,13 +3210,44 @@ def merge_cookbook():
                                  gmm.get("dietary_servings")),
                             )
 
+    # ── Line-setup diagrams (additive by name; remap meal_id by meal name) ────
+    diagrams_added = 0
+    if merge_diagrams and src_line_diagrams:
+        existing_diag_names = {
+            (d["name"] or "").strip().lower()
+            for d in db.execute("SELECT name FROM line_diagrams").fetchall()
+        }
+        src_meal_name_by_id = {sm["id"]: (sm.get("name") or "")
+                               for sm in src_meals if sm.get("id") is not None}
+        active_meal_by_name = {
+            (m["name"] or "").strip().lower(): m["id"]
+            for m in db.execute("SELECT id, name FROM meals").fetchall()
+        }
+        for sd in src_line_diagrams:
+            dkey = (sd.get("name") or "").strip().lower()
+            if not dkey or dkey in existing_diag_names:
+                continue  # additive only: skip diagrams that already exist by name
+            tgt_mid = None
+            smid = sd.get("meal_id")
+            if smid is not None:
+                mname = (src_meal_name_by_id.get(smid) or "").strip().lower()
+                tgt_mid = active_meal_by_name.get(mname)  # None if that meal isn't here
+            db.execute(
+                "INSERT INTO line_diagrams (name, data, meal_id, updated_at) "
+                "VALUES (?,?,?,CURRENT_TIMESTAMP)",
+                (sd.get("name") or "Untitled", sd.get("data") or "{}", tgt_mid),
+            )
+            existing_diag_names.add(dkey)
+            diagrams_added += 1
+
     db.commit()
     return jsonify({
-        "updated":      updated,
-        "added":        added,
-        "added_titles": added_titles,
-        "meals_added":  meals_added,
-        "groups_added": groups_added,
+        "updated":        updated,
+        "added":          added,
+        "added_titles":   added_titles,
+        "meals_added":    meals_added,
+        "groups_added":   groups_added,
+        "diagrams_added": diagrams_added,
     })
 
 
