@@ -396,8 +396,8 @@
     .line-cell { position:absolute; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; cursor:grab; touch-action:none; border-radius:5px; padding:1px; overflow:visible; }
     .line-cell.sel { box-shadow:0 0 0 2px #1f6feb; background:rgba(31,111,235,0.06); z-index:20; }
     .line-shape { border:1.5px solid; background:var(--card); box-sizing:border-box; flex-shrink:0; pointer-events:none; }
-    .line-cell-labels { display:flex; flex-direction:column; align-items:center; text-align:center; max-width:100%; }
-    .line-lbl { font-size:0.62rem; line-height:1.02; text-align:center; color:var(--text); overflow-wrap:anywhere; padding:0 1px; outline:none; min-width:14px; }
+    .line-cell-labels { display:flex; flex-direction:column; align-items:center; text-align:center; }
+    .line-lbl { font-size:0.62rem; line-height:1.02; text-align:center; color:var(--text); overflow-wrap:normal; word-break:normal; white-space:normal; hyphens:none; padding:0; outline:none; min-width:14px; max-width:100%; }
     .line-lbl-food { font-weight:800; }
     .line-lbl-util { font-weight:600; color:var(--muted); font-size:0.56rem; }
     .line-lbl:empty::before { content:attr(data-ph); color:var(--muted); font-weight:400; opacity:0.7; }
@@ -8137,7 +8137,7 @@ const LINE_ITEM_TYPES = {
   service: {label:"Plates/Silverware/Napkins", shape:"rect", color:"#2c6e49"},
   bowl:    {label:"Topping Bowl",     shape:"circle", color:"#1f6feb"},
   tray:    {label:"Topping Tray",     shape:"circle", color:"#1f6feb"},
-  bottle:  {label:"Condiment Bottle", shape:"circle", color:"#8250df"},
+  bottle:  {label:"Condiment Bottle", shape:"circle", color:"#8250df", scale:0.48},
   label:   {label:"Text Label",       shape:"text",   color:"#57606a"},
 };
 const LINE_PALETTE_GROUPS = [
@@ -8351,9 +8351,10 @@ function _lineCellHTML(it, x, y, w, h) {
       onpointerdown="event.stopPropagation()" onkeydown="_lineLblKey(event)" onblur="lineSetLabel('${it.id}','util',this.innerText)">${esc(it.util||"")}</div>`;
   const del = sel ? `<button class="line-cell-del" onpointerdown="event.stopPropagation()" onclick="lineDeleteItem('${it.id}')" title="Remove">✕</button>` : "";
   const open = `<div class="line-cell${sel?" sel":""}" data-id="${it.id}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px" onpointerdown="lineStartMove(event,'${it.id}')">`;
+  const labelMax = w + 4;   // let text run out close to the slot lines before wrapping
 
   if (isText) {   // freestanding caption — just the text, centered
-    return `${open}${del}<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${w-6}px">${food}</div></div>`;
+    return `${open}${del}<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${labelMax}px">${food}</div></div>`;
   }
 
   // Shape sized to fill the cell; decide inside vs. below from that footprint.
@@ -8363,7 +8364,7 @@ function _lineCellHTML(it, x, y, w, h) {
 
   if (inside) {
     const shape = `<div class="line-shape" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border-color:${t.color};border-radius:${rad}"></div>`;
-    const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${w-6}px;z-index:2">${food}${util}</div>`;
+    const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${labelMax}px;z-index:2">${food}${util}</div>`;
     return `${open}${del}${shape}${labels}</div>`;
   }
   // Small item — shape on top, labels beneath.
@@ -8373,7 +8374,7 @@ function _lineCellHTML(it, x, y, w, h) {
   if (t.shape === "circle") { const dd = Math.min(w * 0.9, shH * 0.95) * scale; sw = sh = dd; }
   else { sw = w * 0.9 * scale; sh = shH * 0.9; }
   const shape = `<div class="line-shape" style="width:${sw}px;height:${sh}px;border-color:${t.color};border-radius:${rad}"></div>`;
-  return `${open}${del}${shape}<div class="line-cell-labels">${food}${util}</div></div>`;
+  return `${open}${del}${shape}<div class="line-cell-labels" style="max-width:${labelMax}px">${food}${util}</div></div>`;
 }
 
 // Cells for one slot: 1 item fills the slot (centered); 2 items stack top/bottom.
@@ -8579,9 +8580,10 @@ function _linePrintCell(it, x, y, w, h) {
   const isText = t.shape === "text";
   const scale = t.scale || 1;
   const rad = t.shape === "circle" ? "50%" : "6px";
-  const food = `<div style="font:800 9px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#111;text-align:center">${escP(it.food||"")}</div>`;
-  const util = isText ? "" : `<div style="font:600 8px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#555;text-align:center">${escP(it.util||"")}</div>`;
+  const food = `<div style="font:800 9px sans-serif;line-height:1.05;overflow-wrap:normal;word-break:normal;white-space:normal;color:#111;text-align:center">${escP(it.food||"")}</div>`;
+  const util = isText ? "" : `<div style="font:600 8px sans-serif;line-height:1.05;overflow-wrap:normal;word-break:normal;white-space:normal;color:#555;text-align:center">${escP(it.util||"")}</div>`;
   const box = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;box-sizing:border-box`;
+  const labelMax = w + 4;
   if (isText) {
     return `<div style="${box};display:flex;align-items:center;justify-content:center;text-align:center">${food}</div>`;
   }
@@ -8591,7 +8593,7 @@ function _linePrintCell(it, x, y, w, h) {
   if (inside) {
     return `<div style="${box}">
       <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>
-      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${w-6}px">${food}${util}</div></div>`;
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${labelMax}px">${food}${util}</div></div>`;
   }
   const LA = Math.min(h * 0.42, 24);
   const shH = Math.max(8, h - LA);
@@ -8599,7 +8601,7 @@ function _linePrintCell(it, x, y, w, h) {
   if (t.shape === "circle") { const dd = Math.min(w * 0.9, shH * 0.95) * scale; sw = sh = dd; }
   else { sw = w * 0.9 * scale; sh = shH * 0.9; }
   const shape = `<div style="width:${sw}px;height:${sh}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>`;
-  return `<div style="${box};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">${shape}${food}${util}</div>`;
+  return `<div style="${box};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;max-width:${labelMax}px">${shape}${food}${util}</div>`;
 }
 // Positioned tables + slot items for a diagram's data (static, no editing chrome).
 function _lineDiagramEls(data) {
