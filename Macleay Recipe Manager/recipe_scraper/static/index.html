@@ -8632,23 +8632,27 @@ function _lineDiagramEls(data) {
   return {els, w, h};
 }
 // One diagram as a print section, ROTATED 90° so a wide layout fits a portrait
-// page (the reader turns the paper). Fits within maxW x maxH (portrait area).
-function _lineDiagramSection(d, maxW, maxH, mealName) {
+// page (the reader turns the paper). The title rides above the tables inside the
+// rotated content, so it sits above them once the page is turned upright. Fits
+// within maxW x maxH (portrait printable area) and is centred on the page.
+function _lineDiagramSection(d, maxW, maxH) {
   const {els, w, h} = _lineDiagramEls(_lineMigrateData(d.data || {}));
-  // Rotated footprint is h×w, so scale to fit that into the page area.
-  const ps = Math.min(maxW / h, maxH / w);
-  const fw = Math.ceil(h * ps), fh = Math.ceil(w * ps);
-  const sub = mealName ? ` — ${escP(mealName)}` : "";
-  return `<div class="line-diagram-page" style="page-break-inside:avoid;margin-bottom:10px">
-    <h3 style="margin:0 0 6px;font-family:sans-serif">${escP(d.name)}${sub} <span style="font-weight:400;color:#666;font-size:0.82em">(turn the page sideways to view)</span></h3>
-    <div style="position:relative;width:${fw}px;height:${fh}px">
-      <div style="position:absolute;top:0;left:0;width:${w}px;height:${h}px;transform-origin:0 0;transform:translateX(${h*ps}px) rotate(90deg) scale(${ps})">${els}</div>
+  const TITLE_H = 54;                 // band above the tables (diagram coords)
+  const contentH = h + TITLE_H;
+  const content =
+    `<div style="position:absolute;left:0;top:0;width:${w}px;height:${TITLE_H}px;display:flex;align-items:center;justify-content:center;text-align:center;font:800 30px sans-serif;color:#000">${escP(d.name)}</div>` +
+    `<div style="position:absolute;left:0;top:${TITLE_H}px;width:${w}px;height:${h}px">${els}</div>`;
+  // Rotated footprint is contentH×w; scale to fit the page area.
+  const ps = Math.min(maxW / contentH, maxH / w);
+  const fw = Math.ceil(contentH * ps), fh = Math.ceil(w * ps);
+  return `<div class="line-diagram-page" style="page-break-inside:avoid;text-align:center">
+    <div style="display:inline-block;position:relative;width:${fw}px;height:${fh}px">
+      <div style="position:absolute;top:0;left:0;width:${w}px;height:${contentH}px;transform-origin:0 0;transform:translateX(${contentH*ps}px) rotate(90deg) scale(${ps})">${content}</div>
     </div></div>`;
 }
 function _lineBuildPrintHtml() {
   const d = selectedDiagram; if (!d) return "";
-  const mealName = d.meal_id ? ((_lineMeals.find(m => String(m.id)===String(d.meal_id))||{}).name || "") : "";
-  const section = _lineDiagramSection(d, 680, 920, mealName);   // portrait page, rotated diagram
+  const section = _lineDiagramSection(d, 680, 920);   // portrait page, rotated diagram
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(d.name)}</title>
     <style>@page { size: letter portrait; margin: 0.4in; } body { margin:0; font-family:sans-serif; }</style></head>
     <body>${section}</body></html>`;
@@ -8668,7 +8672,7 @@ async function _diagramSectionsForMeal(mid) {
     let full = null;
     try { full = await (await fetch(`/line-diagrams/${meta.id}`)).json(); } catch {}
     if (!full || full.error) continue;
-    out.push(_lineDiagramSection(full, 660, 900, meta.meal_name || ""));
+    out.push(_lineDiagramSection(full, 660, 900));
   }
   return out;
 }
