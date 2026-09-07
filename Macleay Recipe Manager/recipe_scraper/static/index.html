@@ -391,24 +391,17 @@
     .line-canvas { position:relative; transform-origin:top left; border:1px solid var(--border); border-radius:10px; background:repeating-linear-gradient(0deg,transparent,transparent 24px,rgba(0,0,0,0.03) 24px,rgba(0,0,0,0.03) 25px),repeating-linear-gradient(90deg,transparent,transparent 24px,rgba(0,0,0,0.03) 24px,rgba(0,0,0,0.03) 25px); }
     .line-table { position:absolute; border:2px solid #b98a5e; border-radius:6px; background:rgba(198,146,90,0.12); box-sizing:border-box; }
     .line-row-cap { position:absolute; font-size:0.8rem; font-weight:800; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase; }
-    .line-item { position:absolute; box-sizing:border-box; border:1.5px solid; background:var(--card); display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:grab; touch-action:none; overflow:visible; }
-    .line-item.sel { box-shadow:0 0 0 2px #1f6feb, 0 2px 8px rgba(0,0,0,0.2); z-index:20; }
-    .line-item.shape-basket { border-bottom-width:3px; }
-    .line-item.shape-text { border-style:dashed; }
-    .line-labels.inside { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; text-align:center; gap:1px; }
-    .line-labels.outside { position:absolute; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:1px; min-width:72px; max-width:130px; background:var(--card); border:1px solid var(--border); border-radius:5px; padding:1px 3px; z-index:22; }
-    .line-labels.outside.below { top:calc(100% + 3px); }
-    .line-labels.outside.above { bottom:calc(100% + 3px); }
-    .line-lbl { font-size:0.66rem; line-height:1.05; text-align:center; color:var(--text); overflow-wrap:anywhere; padding:0 1px; outline:none; min-width:14px; }
+    .line-slot-div { position:absolute; width:1px; border-left:1px dashed rgba(138,101,64,0.5); box-sizing:border-box; pointer-events:none; }
+    .line-slot-empty { position:absolute; border:1px dashed rgba(138,101,64,0.35); border-radius:5px; box-sizing:border-box; pointer-events:none; }
+    .line-cell { position:absolute; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; cursor:grab; touch-action:none; border-radius:5px; padding:1px; overflow:visible; }
+    .line-cell.sel { box-shadow:0 0 0 2px #1f6feb; background:rgba(31,111,235,0.06); z-index:20; }
+    .line-shape { border:1.5px solid; background:var(--card); box-sizing:border-box; flex-shrink:0; pointer-events:none; }
+    .line-cell-labels { display:flex; flex-direction:column; align-items:center; text-align:center; max-width:100%; }
+    .line-lbl { font-size:0.62rem; line-height:1.02; text-align:center; color:var(--text); overflow-wrap:anywhere; padding:0 1px; outline:none; min-width:14px; }
     .line-lbl-food { font-weight:800; }
-    .line-lbl-util { font-weight:600; color:var(--muted); font-size:0.6rem; }
+    .line-lbl-util { font-weight:600; color:var(--muted); font-size:0.56rem; }
     .line-lbl:empty::before { content:attr(data-ph); color:var(--muted); font-weight:400; opacity:0.7; }
-    .line-item-handle { position:absolute; right:-6px; bottom:-6px; width:13px; height:13px; border-radius:3px; background:#1f6feb; border:2px solid #fff; cursor:nwse-resize; touch-action:none; z-index:24; }
-    .line-item-bar { position:absolute; left:50%; top:-34px; transform:translateX(-50%); display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:7px; box-shadow:0 3px 10px rgba(0,0,0,0.18); padding:2px; white-space:nowrap; z-index:30; }
-    .line-item-bar button { border:none; background:var(--bg); color:var(--text); font-size:0.72rem; font-weight:700; padding:2px 6px; border-radius:4px; cursor:pointer; line-height:1.4; }
-    .line-item-bar button:hover { background:var(--border); }
-    .line-guide { position:absolute; background:#1f6feb; z-index:25; pointer-events:none; }
-    .line-guide.v { width:1px; } .line-guide.h { height:1px; }
+    .line-cell-del { position:absolute; top:-8px; right:-8px; width:16px; height:16px; border-radius:50%; background:var(--red); color:#fff; border:2px solid var(--card); font-size:0.7rem; line-height:1; cursor:pointer; padding:0; z-index:30; }
     .meal-recipe-thumb { width:52px; height:52px; object-fit:cover; border-radius:6px; flex-shrink:0; }
     .meal-recipe-thumb-placeholder { width:52px; height:52px; background:#f0e9e9; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.4rem; flex-shrink:0; }
     .meal-recipe-info { flex:1; min-width:0; }
@@ -8130,31 +8123,36 @@ let _lineDrag         = null;   // active pointer-drag state
 
 const LINE_TABLE_W = 360, LINE_TABLE_H = 150, LINE_PAD = 26, LINE_ROW_GAP = 96;
 const LINE_SERV_TABLES = 2, LINE_COND_TABLES = 1;   // fixed line lengths
-let   _lineScale = 1;                                // fit-to-view scale factor
+const LINE_SERV_SLOTS = 8;   // 4 slots per serving table × 2 tables
+const LINE_COND_SLOTS = 8;   // condiment columns — each holds 2 stacked or 1 centered
+let   _lineScale = 1;        // fit-to-view scale factor
 
-// shape: rect | circle | basket | text.  No emojis — items are drawn as shapes.
+// shape: rect | circle | text.  No emojis — items are drawn as shapes and locked
+// into fixed slots on the tables.
 const LINE_ITEM_TYPES = {
-  chafer:  {label:"Hotel Pan Chafer", shape:"rect",   w:66,  h:104, color:"#c0392b"},
-  gravy:   {label:"Gravy Chafer",     shape:"circle", w:58,  h:58,  color:"#c0392b"},
-  linepan: {label:"Hotel Line Pan",   shape:"rect",   w:104, h:140, color:"#b9770e"},
-  hotpad:  {label:"Hot Pad",          shape:"rect",   w:84,  h:84,  color:"#b9770e"},
-  plates:  {label:"Plate Stack",      shape:"circle", w:44,  h:44,  color:"#2c6e49"},
-  silver:  {label:"Silverware Holder",shape:"circle", w:15,  h:15,  color:"#2c6e49"},
-  napkins: {label:"Napkin Holder",    shape:"basket", w:17,  h:15,  color:"#2c6e49"},
-  bowl:    {label:"Topping Bowl",     shape:"circle", w:26,  h:26,  color:"#1f6feb"},
-  tray:    {label:"Topping Tray",     shape:"circle", w:60,  h:60,  color:"#1f6feb"},
-  bottle:  {label:"Condiment Bottle", shape:"circle", w:15,  h:15,  color:"#8250df"},
-  label:   {label:"Text Label",       shape:"text",   w:130, h:36,  color:"#57606a"},
+  chafer:  {label:"Hotel Pan Chafer", shape:"rect",   color:"#c0392b"},
+  gravy:   {label:"Gravy Chafer",     shape:"circle", color:"#c0392b"},
+  linepan: {label:"Hotel Line Pan",   shape:"rect",   color:"#b9770e"},
+  hotpad:  {label:"Hot Pad",          shape:"rect",   color:"#b9770e"},
+  service: {label:"Plates/Silverware/Napkins", shape:"rect", color:"#2c6e49"},
+  bowl:    {label:"Topping Bowl",     shape:"circle", color:"#1f6feb"},
+  tray:    {label:"Topping Tray",     shape:"circle", color:"#1f6feb"},
+  bottle:  {label:"Condiment Bottle", shape:"circle", color:"#8250df"},
+  label:   {label:"Text Label",       shape:"text",   color:"#57606a"},
 };
 const LINE_PALETTE_GROUPS = [
-  {title:"Hot Service",    types:["chafer","gravy","linepan","hotpad"]},
-  {title:"Place Settings", types:["plates","silver","napkins"]},
-  {title:"Toppings",       types:["bowl","tray"]},
-  {title:"Condiments",     types:["bottle"]},
-  {title:"Labels",         types:["label"]},
+  {title:"Hot Service", types:["chafer","gravy","linepan","hotpad"]},
+  {title:"Service",     types:["service"]},
+  {title:"Toppings",    types:["bowl","tray"]},
+  {title:"Condiments",  types:["bottle"]},
+  {title:"Labels",      types:["label"]},
 ];
+// Old item types that were merged/removed — map to their replacement on load.
+const LINE_TYPE_ALIAS = {plates:"service", silver:"service", napkins:"service"};
+function _lineNormType(t) { return LINE_ITEM_TYPES[t] ? t : (LINE_TYPE_ALIAS[t] || "chafer"); }
 
-function _lineDefaultData() { return {serving_tables:LINE_SERV_TABLES, condiment_tables:LINE_COND_TABLES, items:[]}; }
+function _lineEmptySlots(n) { return Array.from({length:n}, () => []); }
+function _lineDefaultData() { return {version:2, serving:_lineEmptySlots(LINE_SERV_SLOTS), condiment:_lineEmptySlots(LINE_COND_SLOTS)}; }
 function _lineUID() { return "i" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 function _lineServingRowY() { return LINE_PAD + 32; }
 function _lineCondRowY()    { return _lineServingRowY() + LINE_TABLE_H + LINE_ROW_GAP; }
@@ -8163,15 +8161,61 @@ function _lineCanvasSize() {
   return { w: LINE_PAD*2 + cols*LINE_TABLE_W,
            h: _lineCondRowY() + LINE_TABLE_H + LINE_PAD };
 }
-// Labels sit inside only when the shape is roomy enough; otherwise they hover
-// above/below the item.
-function _lineLabelsInside(it, t) {
-  if (t.shape === "text") return true;
-  if (t.shape === "rect")   return it.w >= 118 && it.h >= 72;
-  if (t.shape === "circle") return it.w >= 116 && it.h >= 116;  // big circle (tray)
-  return false;                                                  // basket, small circles
+function _servSlotW() { return (LINE_SERV_TABLES*LINE_TABLE_W)/LINE_SERV_SLOTS; }   // 90
+function _condSlotW() { return (LINE_COND_TABLES*LINE_TABLE_W)/LINE_COND_SLOTS; }   // 45
+function _lineSlotGeom(line) {
+  return line === "serving" ? {y:_lineServingRowY(), w:_servSlotW(), n:LINE_SERV_SLOTS}
+                            : {y:_lineCondRowY(),   w:_condSlotW(), n:LINE_COND_SLOTS};
 }
-function _lineItemById(id) { return (selectedDiagram && selectedDiagram.data.items || []).find(x => x.id === id); }
+function _lineSlotRect(line, idx) { const g = _lineSlotGeom(line); return {x:LINE_PAD+idx*g.w, y:g.y, w:g.w, h:LINE_TABLE_H}; }
+function _lineHitSlot(lx, ly) {
+  for (const line of ["serving","condiment"]) {
+    const g = _lineSlotGeom(line);
+    if (ly >= g.y && ly <= g.y + LINE_TABLE_H) {
+      const idx = Math.floor((lx - LINE_PAD) / g.w);
+      if (idx < 0 || idx >= g.n) return null;
+      return {line, slot:idx, half:(ly - g.y) < LINE_TABLE_H/2 ? 0 : 1};
+    }
+  }
+  return null;
+}
+// Normalise/migrate stored data into the v2 slot model.
+function _lineMigrateData(data) {
+  const cleanCell = arr => (Array.isArray(arr)?arr:[]).slice(0,2)
+    .map(x => ({id:x.id||_lineUID(), type:_lineNormType(x.type), food:x.food||x.label||"", util:x.util||""}));
+  const fixSlots = (arr, n) => { const out = _lineEmptySlots(n); for (let i=0;i<n;i++) out[i] = cleanCell(arr && arr[i]); return out; };
+  if (data && data.version === 2 && Array.isArray(data.serving) && Array.isArray(data.condiment)) {
+    return {version:2, serving:fixSlots(data.serving, LINE_SERV_SLOTS), condiment:fixSlots(data.condiment, LINE_COND_SLOTS)};
+  }
+  // Legacy free-form items → fill serving slots first (bottles go to condiments).
+  const nd = _lineDefaultData();
+  let si = 0, ci = 0;
+  (data && Array.isArray(data.items) ? data.items : []).forEach(it => {
+    const type = _lineNormType(it.type);
+    const item = {id:it.id||_lineUID(), type, food:it.food||it.label||"", util:it.util||""};
+    if (type === "bottle") { if (ci < LINE_COND_SLOTS) nd.condiment[ci++].push(item); }
+    else if (si < LINE_SERV_SLOTS) nd.serving[si++].push(item);
+    else if (ci < LINE_COND_SLOTS) nd.condiment[ci++].push(item);
+  });
+  return nd;
+}
+function _lineFindItem(id) {
+  const d = selectedDiagram; if (!d) return null;
+  for (const line of ["serving","condiment"]) for (const cell of d.data[line]) for (const it of cell) if (it.id === id) return it;
+  return null;
+}
+function _lineRemoveItem(id) {
+  const d = selectedDiagram; if (!d) return null;
+  for (const line of ["serving","condiment"]) { const arr = d.data[line];
+    for (let s=0;s<arr.length;s++) { const i = arr[s].findIndex(x => x.id === id); if (i >= 0) return arr[s].splice(i,1)[0]; } }
+  return null;
+}
+function _linePlace(line, slot, half, item) {
+  const cell = selectedDiagram.data[line][slot] || (selectedDiagram.data[line][slot] = []);
+  if (cell.length === 0) cell.push(item);
+  else if (cell.length === 1) { if (half === 0) cell.unshift(item); else cell.push(item); }
+  else cell[half] = item;   // full — replace the half dropped on
+}
 function _lineCanvasRect() { const c = document.getElementById("line-canvas"); return c ? c.getBoundingClientRect() : {left:0,top:0}; }
 
 async function initLinesTab() {
@@ -8228,16 +8272,7 @@ async function createLineDiagram(mealId) {
 async function openLineDiagram(id) {
   const d = await (await fetch(`/line-diagrams/${id}`)).json();
   if (!d || d.error) { showAlert("Could not open this line setup."); return; }
-  d.data = (d.data && typeof d.data === "object") ? d.data : _lineDefaultData();
-  if (!Array.isArray(d.data.items)) d.data.items = [];
-  d.data.serving_tables = LINE_SERV_TABLES;    // fixed lengths
-  d.data.condiment_tables = LINE_COND_TABLES;
-  // Migrate older single-label items to the food/utensil pair.
-  d.data.items.forEach(it => {
-    if (it.label != null && it.food == null) { it.food = it.label; delete it.label; }
-    if (it.food == null) it.food = "";
-    if (it.util == null) it.util = "";
-  });
+  d.data = _lineMigrateData(d.data && typeof d.data === "object" ? d.data : {});
   selectedDiagram = d; _lineSelId = null;
   if (!_lineMeals.length) { try { _lineMeals = await (await fetch("/meals")).json(); } catch {} }
   // Activate the Line Setup tab WITHOUT running initLinesTab (which resets state)
@@ -8287,7 +8322,7 @@ function lineRenderEditor() {
           <button class="btn btn-danger" style="font-size:0.8rem;padding:0.3rem 0.7rem" onclick="lineDeleteDiagram()">🗑 Delete</button>
         </div>
       </div>
-      <div style="font-size:0.78rem;color:var(--muted);margin-bottom:0.6rem">Drag items from the left onto the tables. Click an item to add its food &amp; utensil labels, rotate, resize, or delete.</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-bottom:0.6rem">Drag items onto a slot to lock them in place. Each slot holds one centered item, or drop a second onto its top/bottom half to stack two. Click an item to label its food &amp; utensil or ✕ to remove.</div>
       <div class="line-editor-wrap">
         <div class="line-palette">${palette}</div>
         <div class="line-canvas-fit" id="line-canvas-fit"><div id="line-canvas" class="line-canvas" onpointerdown="lineCanvasBg(event)"></div></div>
@@ -8297,43 +8332,50 @@ function lineRenderEditor() {
   _lineFitScale();
 }
 
-function _lineItemHTML(it) {
+// One item tile inside a slot cell (x,y,w,h are the cell's logical rect).
+function _lineCellHTML(it, x, y, w, h) {
   const t = LINE_ITEM_TYPES[it.type] || LINE_ITEM_TYPES.label;
   const sel = it.id === _lineSelId;
   const isText = t.shape === "text";
-  const inside = _lineLabelsInside(it, t);
-  const H = _lineCanvasSize().h;
-  const above = !inside && (it.y + it.h + 36 > H);   // hover above near the bottom
-  const radius = t.shape === "circle" ? "50%" : t.shape === "basket" ? "6px 6px 16px 16px" : "7px";
-  const bg = isText ? "transparent" : "var(--card)";
+  const LA = Math.min(h * 0.42, 26);            // room for the two labels
+  const shH = Math.max(8, h - LA);
+  let shape = "";
+  if (!isText) {
+    let sw, sh;
+    if (t.shape === "circle") { const dd = Math.min(w * 0.8, shH * 0.92); sw = sh = dd; }
+    else { sw = w * 0.9; sh = shH * 0.9; }
+    shape = `<div class="line-shape" style="width:${sw}px;height:${sh}px;border-color:${t.color};border-radius:${t.shape==="circle"?"50%":"6px"}"></div>`;
+  }
   const foodPh = isText ? "label…" : "food…";
-  const foodField = `<div class="line-lbl line-lbl-food" contenteditable="true" spellcheck="false" data-ph="${foodPh}"
+  const food = `<div class="line-lbl line-lbl-food" contenteditable="true" spellcheck="false" data-ph="${foodPh}"
       onpointerdown="event.stopPropagation()" onblur="lineSetLabel('${it.id}','food',this.innerText)">${esc(it.food||"")}</div>`;
-  const utilField = isText ? "" : `<div class="line-lbl line-lbl-util" contenteditable="true" spellcheck="false" data-ph="utensil…"
+  const util = isText ? "" : `<div class="line-lbl line-lbl-util" contenteditable="true" spellcheck="false" data-ph="utensil…"
       onpointerdown="event.stopPropagation()" onblur="lineSetLabel('${it.id}','util',this.innerText)">${esc(it.util||"")}</div>`;
-  const labelsCls = inside ? "line-labels inside" : ("line-labels outside " + (above ? "above" : "below"));
-  const labels = `<div class="${labelsCls}">${foodField}${utilField}</div>`;
-  const bar = sel ? `<div class="line-item-bar" onpointerdown="event.stopPropagation()">
-      <button onclick="lineRotateSel()" title="Rotate 90°">⟳</button>
-      <button onclick="lineSizeSel(0.75)" title="Small">S</button>
-      <button onclick="lineSizeSel(1)" title="Medium">M</button>
-      <button onclick="lineSizeSel(1.4)" title="Large">L</button>
-      <button onclick="lineDupSel()" title="Duplicate">⧉</button>
-      <button onclick="lineDelSel()" title="Delete" style="color:var(--red)">🗑</button>
-    </div>` : "";
-  return `<div class="line-item shape-${t.shape}${sel?' sel':''}" data-id="${it.id}"
-      style="left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;border-color:${t.color};border-radius:${radius};background:${bg}"
+  const del = sel ? `<button class="line-cell-del" onpointerdown="event.stopPropagation()" onclick="lineDeleteItem('${it.id}')" title="Remove">✕</button>` : "";
+  return `<div class="line-cell${sel?" sel":""}" data-id="${it.id}"
+      style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"
       onpointerdown="lineStartMove(event,'${it.id}')">
-      ${bar}
-      ${labels}
-      ${sel ? `<div class="line-item-handle" onpointerdown="lineStartResize(event,'${it.id}')"></div>` : ""}
-    </div>`;
+      ${del}${shape}<div class="line-cell-labels">${food}${util}</div></div>`;
+}
+
+// Cells for one slot: 1 item fills the slot (centered); 2 items stack top/bottom.
+function _lineSlotCellsHTML(line, s, r, items) {
+  const p = 3;
+  if (!items.length) {
+    return `<div class="line-slot-empty" style="left:${r.x+p}px;top:${r.y+p}px;width:${r.w-2*p}px;height:${r.h-2*p}px"></div>`;
+  }
+  const n = items.length;
+  return items.map((it, i) => {
+    let cy0, ch;
+    if (n === 1) { cy0 = r.y; ch = r.h; }
+    else { ch = r.h/2; cy0 = r.y + i*ch; }
+    return _lineCellHTML(it, r.x+p, cy0+p, r.w-2*p, ch-2*p);
+  }).join("");
 }
 
 function lineRenderCanvas() {
   const d = selectedDiagram; if (!d) return;
   const canvas = document.getElementById("line-canvas"); if (!canvas) return;
-  const data = d.data;
   const {w, h} = _lineCanvasSize();
   const sy = _lineServingRowY(), cy = _lineCondRowY();
   const tbl = (x, y) => `<div class="line-table" style="left:${x}px;top:${y}px;width:${LINE_TABLE_W}px;height:${LINE_TABLE_H}px"></div>`;
@@ -8341,27 +8383,28 @@ function lineRenderCanvas() {
   for (let i=0;i<LINE_SERV_TABLES;i++) bg += tbl(LINE_PAD+i*LINE_TABLE_W, sy);
   bg += `<div class="line-row-cap" style="left:${LINE_PAD}px;top:${cy-26}px">CONDIMENT LINE</div>`;
   for (let i=0;i<LINE_COND_TABLES;i++) bg += tbl(LINE_PAD+i*LINE_TABLE_W, cy);
+  let cells = "";
+  ["serving","condiment"].forEach(line => {
+    const g = _lineSlotGeom(line);
+    for (let s=0; s<g.n; s++) {
+      const r = _lineSlotRect(line, s);
+      if (s > 0) bg += `<div class="line-slot-div" style="left:${r.x}px;top:${r.y}px;height:${r.h}px"></div>`;
+      cells += _lineSlotCellsHTML(line, s, r, d.data[line][s] || []);
+    }
+  });
   canvas.style.width = w+"px"; canvas.style.height = h+"px";
-  canvas.innerHTML = bg + `<div id="line-guides"></div>` + (data.items||[]).map(_lineItemHTML).join("");
+  canvas.innerHTML = bg + cells + `<div id="line-drop-ind" hidden></div>`;
   _lineFitScale();
 }
 
 function lineCanvasBg() { if (_lineSelId != null) { _lineSelId = null; lineRenderCanvas(); } }
 
-// ── Pointer drag: create / move / resize ──────────────────────────────────────
+// ── Slot-locked drag: drop a palette item, or move an item, into a slot ───────
 function lineStartCreate(e, type) {
   e.preventDefault();
-  const t = LINE_ITEM_TYPES[type]; if (!t || !selectedDiagram) return;
-  const rect = _lineCanvasRect();
-  const it = {id:_lineUID(), type, food:"", util:"",
-              x: Math.max(0, Math.round((e.clientX - rect.left)/_lineScale - t.w/2)),
-              y: Math.max(0, Math.round((e.clientY - rect.top)/_lineScale  - t.h/2)),
-              w:t.w, h:t.h};
-  selectedDiagram.data.items.push(it);
-  _lineSelId = it.id;
-  lineRenderCanvas();
-  const el = document.querySelector(`.line-item[data-id="${it.id}"]`);
-  _lineDrag = {mode:"move", id:it.id, dx:t.w/2, dy:t.h/2, el};
+  if (!LINE_ITEM_TYPES[type] || !selectedDiagram) return;
+  _lineDrag = {kind:"create", type};
+  _lineGhost(e, LINE_ITEM_TYPES[type]);
   window.addEventListener("pointermove", _lineDragMove);
   window.addEventListener("pointerup", _lineDragUp, {once:true});
 }
@@ -8370,90 +8413,67 @@ function lineStartMove(e, id) {
   if (e.button && e.button !== 0) return;
   e.preventDefault(); e.stopPropagation();
   _lineSelId = id; lineRenderCanvas();
-  const it = _lineItemById(id); if (!it) return;
-  const rect = _lineCanvasRect();
-  const el = document.querySelector(`.line-item[data-id="${id}"]`);
-  _lineDrag = {mode:"move", id, dx:(e.clientX-rect.left)/_lineScale-it.x, dy:(e.clientY-rect.top)/_lineScale-it.y, el};
-  window.addEventListener("pointermove", _lineDragMove);
-  window.addEventListener("pointerup", _lineDragUp, {once:true});
-}
-
-function lineStartResize(e, id) {
-  e.preventDefault(); e.stopPropagation();
-  const it = _lineItemById(id); if (!it) return;
-  const el = document.querySelector(`.line-item[data-id="${id}"]`);
-  _lineDrag = {mode:"resize", id, startX:e.clientX, startY:e.clientY, w0:it.w, h0:it.h, el};
+  const it = _lineFindItem(id); if (!it) return;
+  _lineDrag = {kind:"move", itemId:id, type:it.type};
+  _lineGhost(e, LINE_ITEM_TYPES[it.type] || LINE_ITEM_TYPES.label);
   window.addEventListener("pointermove", _lineDragMove);
   window.addEventListener("pointerup", _lineDragUp, {once:true});
 }
 
 function _lineDragMove(e) {
-  const dr = _lineDrag; if (!dr) return;
-  const it = _lineItemById(dr.id); if (!it || !dr.el) return;
-  if (dr.mode === "resize") {
-    it.w = Math.max(24, Math.round(dr.w0 + (e.clientX - dr.startX)/_lineScale));
-    it.h = Math.max(20, Math.round(dr.h0 + (e.clientY - dr.startY)/_lineScale));
-    dr.el.style.width = it.w+"px"; dr.el.style.height = it.h+"px";
-    return;
-  }
+  if (!_lineDrag) return;
+  _lineGhostMove(e);
   const rect = _lineCanvasRect();
-  let x = (e.clientX - rect.left)/_lineScale - dr.dx;
-  let y = (e.clientY - rect.top)/_lineScale  - dr.dy;
-  const snap = _lineSnap(it, x, y);
-  const {w:cw, h:ch} = _lineCanvasSize();
-  it.x = Math.round(Math.max(0, Math.min(snap.x, cw - it.w)));
-  it.y = Math.round(Math.max(0, Math.min(snap.y, ch - it.h)));
-  dr.el.style.left = it.x+"px"; dr.el.style.top = it.y+"px";
-  _lineDrawGuides(snap.guides);
+  const hit = _lineHitSlot((e.clientX - rect.left)/_lineScale, (e.clientY - rect.top)/_lineScale);
+  _lineShowDrop(hit);
 }
 
-function _lineDragUp() {
+function _lineDragUp(e) {
   window.removeEventListener("pointermove", _lineDragMove);
-  _lineDrawGuides([]);
-  _lineDrag = null;
-  lineRenderCanvas();
-  lineAutosave();
+  _lineGhostRemove();
+  const dr = _lineDrag; _lineDrag = null;
+  const ind = document.getElementById("line-drop-ind"); if (ind) ind.hidden = true;
+  if (!dr) return;
+  const rect = _lineCanvasRect();
+  const hit = _lineHitSlot((e.clientX - rect.left)/_lineScale, (e.clientY - rect.top)/_lineScale);
+  if (hit) {
+    if (dr.kind === "create") {
+      const item = {id:_lineUID(), type:dr.type, food:"", util:""};
+      _linePlace(hit.line, hit.slot, hit.half, item);
+      _lineSelId = item.id;
+    } else {
+      const found = _lineRemoveItem(dr.itemId);
+      if (found) { _linePlace(hit.line, hit.slot, hit.half, found); _lineSelId = found.id; }
+    }
+    lineRenderCanvas(); lineAutosave();
+  } else {
+    lineRenderCanvas();   // dropped off a slot — leave things as they were
+  }
 }
 
-// Smart alignment: snap the moving item's edges/centers to table points and to
-// other items, showing a guide line where they line up. Free movement otherwise.
-function _lineSnap(it, x, y) {
-  const TH = 6;
-  const data = selectedDiagram.data;
-  const sy = _lineServingRowY(), cy = _lineCondRowY();
-  const xs = [], ys = [];
-  const addTable = (tx, ty) => {
-    xs.push(tx, tx+LINE_TABLE_W/2, tx+LINE_TABLE_W);
-    ys.push(ty, ty+LINE_TABLE_H/2, ty+LINE_TABLE_H);
-  };
-  for (let i=0;i<LINE_SERV_TABLES;i++) addTable(LINE_PAD+i*LINE_TABLE_W, sy);
-  for (let i=0;i<LINE_COND_TABLES;i++) addTable(LINE_PAD+i*LINE_TABLE_W, cy);
-  (data.items||[]).forEach(o => { if (o.id === it.id) return;
-    xs.push(o.x, o.x+o.w/2, o.x+o.w);
-    ys.push(o.y, o.y+o.h/2, o.y+o.h);
-  });
-  const best = (targets, val, size) => {
-    let b = null;
-    [0, size/2, size].forEach(off => targets.forEach(tp => {
-      const dist = Math.abs((val+off) - tp);
-      if (dist <= TH && (!b || dist < b.dist)) b = {dist, val: tp - off, line: tp};
-    }));
-    return b;
-  };
-  const guides = [];
-  let ox = x, oy = y;
-  const bx = best(xs, x, it.w); if (bx) { ox = bx.val; guides.push({axis:"v", pos:bx.line}); }
-  const by = best(ys, y, it.h); if (by) { oy = by.val; guides.push({axis:"h", pos:by.line}); }
-  return {x:ox, y:oy, guides};
+// Floating cursor ghost while dragging
+function _lineGhost(e, t) {
+  _lineGhostRemove();
+  const g = document.createElement("div");
+  g.id = "line-ghost";
+  g.style.cssText = `position:fixed;z-index:9999;pointer-events:none;padding:3px 8px;border:2px solid ${t.color};border-radius:6px;background:var(--card);color:var(--text);font-size:0.75rem;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,0.25)`;
+  g.textContent = t.label;
+  document.body.appendChild(g);
+  _lineGhostMove(e);
 }
+function _lineGhostMove(e) { const g = document.getElementById("line-ghost"); if (g) { g.style.left = (e.clientX + 12) + "px"; g.style.top = (e.clientY + 14) + "px"; } }
+function _lineGhostRemove() { const g = document.getElementById("line-ghost"); if (g) g.remove(); }
 
-function _lineDrawGuides(guides) {
-  const layer = document.getElementById("line-guides");
-  if (!layer) return;
-  const {w:cw, h:ch} = _lineCanvasSize();
-  layer.innerHTML = (guides||[]).map(g => g.axis === "v"
-    ? `<div class="line-guide v" style="left:${g.pos}px;top:0;height:${ch}px"></div>`
-    : `<div class="line-guide h" style="top:${g.pos}px;left:0;width:${cw}px"></div>`).join("");
+// Highlight the slot (or slot-half) the drop will land in
+function _lineShowDrop(hit) {
+  const ind = document.getElementById("line-drop-ind"); if (!ind) return;
+  if (!hit) { ind.hidden = true; return; }
+  const r = _lineSlotRect(hit.line, hit.slot);
+  const cell = (selectedDiagram.data[hit.line][hit.slot]) || [];
+  let y = r.y, h = r.h;
+  if (cell.length >= 1) { h = r.h/2; y = r.y + (hit.half ? r.h/2 : 0); }
+  ind.hidden = false;
+  ind.setAttribute("style", `position:absolute;left:${r.x}px;top:${y}px;width:${r.w}px;height:${h}px;background:rgba(31,111,235,0.16);border:2px solid #1f6feb;box-sizing:border-box;pointer-events:none;z-index:40`);
 }
 
 // Scale the whole diagram to fit the visible area (no scrolling) and as big as
@@ -8478,14 +8498,13 @@ window.addEventListener("resize", () => {
 
 // ── Item actions ──────────────────────────────────────────────────────────────
 function lineSetLabel(id, which, text) {
-  const it = _lineItemById(id); if (!it) return;
+  const it = _lineFindItem(id); if (!it) return;
   if (which === "util") it.util = (text||"").trim(); else it.food = (text||"").trim();
   lineAutosave();
 }
-function lineRotateSel() { const it = _lineItemById(_lineSelId); if (!it) return; const w = it.w; it.w = it.h; it.h = w; lineRenderCanvas(); lineAutosave(); }
-function lineSizeSel(f) { const it = _lineItemById(_lineSelId); if (!it) return; const t = LINE_ITEM_TYPES[it.type] || {w:it.w,h:it.h}; it.w = Math.round(t.w*f); it.h = Math.round(t.h*f); lineRenderCanvas(); lineAutosave(); }
-function lineDupSel() { const it = _lineItemById(_lineSelId); if (!it) return; const c = {...it, id:_lineUID(), x:it.x+16, y:it.y+16}; selectedDiagram.data.items.push(c); _lineSelId = c.id; lineRenderCanvas(); lineAutosave(); }
-function lineDelSel() { if (_lineSelId == null || !selectedDiagram) return; selectedDiagram.data.items = selectedDiagram.data.items.filter(x => x.id !== _lineSelId); _lineSelId = null; lineRenderCanvas(); lineAutosave(); }
+function lineDeleteItem(id) {
+  if (_lineRemoveItem(id)) { if (_lineSelId === id) _lineSelId = null; lineRenderCanvas(); lineAutosave(); }
+}
 
 function lineRenameDiagram(v) { const d = selectedDiagram; if (!d) return; d.name = (v||"Untitled").trim() || "Untitled"; lineAutosave(); }
 function lineTieMeal(v) { const d = selectedDiagram; if (!d) return; d.meal_id = v ? parseInt(v) : null; lineAutosave(); }
@@ -8520,7 +8539,7 @@ document.addEventListener("keydown", e => {
     if (!ev || ev.hidden) return;
     const ae = document.activeElement;
     if (ae && ae.isContentEditable) return;
-    e.preventDefault(); lineDelSel();
+    e.preventDefault(); lineDeleteItem(_lineSelId);
   }
 });
 
@@ -8536,7 +8555,24 @@ async function openMealServingLine(mid) {
 }
 
 // ── Print / PDF — fits a landscape A4 page ────────────────────────────────────
-// Positioned tables + items for a diagram's data (static, no editing chrome).
+// One item tile for print (static shape + labels), centered in its cell rect.
+function _linePrintCell(it, x, y, w, h) {
+  const t = LINE_ITEM_TYPES[it.type] || LINE_ITEM_TYPES.label;
+  const isText = t.shape === "text";
+  const LA = Math.min(h * 0.42, 26);
+  const shH = Math.max(8, h - LA);
+  let shape = "";
+  if (!isText) {
+    let sw, sh;
+    if (t.shape === "circle") { const dd = Math.min(w * 0.8, shH * 0.92); sw = sh = dd; }
+    else { sw = w * 0.9; sh = shH * 0.9; }
+    shape = `<div style="width:${sw}px;height:${sh}px;border:1.5px solid ${t.color};border-radius:${t.shape==="circle"?"50%":"6px"};box-sizing:border-box"></div>`;
+  }
+  const food = `<div style="font:800 9px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#111;text-align:center">${escP(it.food||"")}</div>`;
+  const util = isText ? "" : `<div style="font:600 8px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#555;text-align:center">${escP(it.util||"")}</div>`;
+  return `<div style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;box-sizing:border-box">${shape}${food}${util}</div>`;
+}
+// Positioned tables + slot items for a diagram's data (static, no editing chrome).
 function _lineDiagramEls(data) {
   const {w, h} = _lineCanvasSize();
   const sy = _lineServingRowY(), cy = _lineCondRowY();
@@ -8545,25 +8581,25 @@ function _lineDiagramEls(data) {
   for (let i=0;i<LINE_SERV_TABLES;i++) els += tbl(LINE_PAD+i*LINE_TABLE_W, sy);
   els += `<div style="position:absolute;left:${LINE_PAD}px;top:${cy-26}px;font:800 12px sans-serif;color:#555;letter-spacing:0.5px">CONDIMENT LINE</div>`;
   for (let i=0;i<LINE_COND_TABLES;i++) els += tbl(LINE_PAD+i*LINE_TABLE_W, cy);
-  (data.items||[]).forEach(it => {
-    const t = LINE_ITEM_TYPES[it.type] || LINE_ITEM_TYPES.label;
-    const isText = t.shape === "text";
-    const inside = _lineLabelsInside(it, t);
-    const above  = !inside && (it.y + it.h + 36 > h);
-    const radius = t.shape === "circle" ? "50%" : t.shape === "basket" ? "6px 6px 16px 16px" : "7px";
-    const bg = isText ? "transparent" : "#fff";
-    const lbl = `<div style="font:800 10px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#111">${escP(it.food||"")}</div>` +
-                (isText ? "" : `<div style="font:600 9px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#555">${escP(it.util||"")}</div>`);
-    const lblBox = inside
-      ? `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;text-align:center;padding:2px;box-sizing:border-box">${lbl}</div>`
-      : `<div style="position:absolute;left:50%;transform:translateX(-50%);${above?"bottom:calc(100% + 2px)":"top:calc(100% + 2px)"};min-width:70px;max-width:130px;text-align:center;background:#fff;border:1px solid #ccc;border-radius:4px;padding:1px 3px">${lbl}</div>`;
-    els += `<div style="position:absolute;left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;border:1.5px solid ${t.color};border-radius:${radius};background:${bg};box-sizing:border-box">${lblBox}</div>`;
+  ["serving","condiment"].forEach(line => {
+    const g = _lineSlotGeom(line);
+    for (let s=0; s<g.n; s++) {
+      const r = _lineSlotRect(line, s);
+      if (s > 0) els += `<div style="position:absolute;left:${r.x}px;top:${r.y}px;width:1px;height:${r.h}px;background:#d8c3a8"></div>`;
+      const cell = (data[line] && data[line][s]) || [];
+      const n = cell.length;
+      cell.forEach((it, i) => {
+        let cy0, ch;
+        if (n === 1) { cy0 = r.y; ch = r.h; } else { ch = r.h/2; cy0 = r.y + i*ch; }
+        els += _linePrintCell(it, r.x+3, cy0+3, r.w-6, ch-6);
+      });
+    }
   });
   return {els, w, h};
 }
 // One diagram as a self-contained print section, scaled to fit maxW x maxH.
 function _lineDiagramSection(d, maxW, maxH, mealName) {
-  const {els, w, h} = _lineDiagramEls(d.data || {});
+  const {els, w, h} = _lineDiagramEls(_lineMigrateData(d.data || {}));
   const ps = Math.min(maxW / w, maxH / h);
   const sub = mealName ? ` <span style="font-weight:400;color:#666">— ${escP(mealName)}</span>` : "";
   return `<div style="page-break-inside:avoid">
