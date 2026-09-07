@@ -3720,9 +3720,6 @@ const PRINT_CSS = `
   .dir-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:4pt 0 0; }
   .directions-text { font-size:11pt; line-height:1.55; white-space:pre-wrap; word-break:break-word; margin:0; }
   .page-break { page-break-after:always; }
-  /* Serving-line diagram pages print landscape, even amid portrait recipes */
-  @page landscapeDiagram { size: A4 landscape; margin: 0.4in; }
-  .line-diagram-page { page: landscapeDiagram; }
 `;
 
 // Build the inner body HTML for one recipe at a given serving scale factor
@@ -7759,55 +7756,48 @@ async function confirmMergeCookbook() {
 // ── Helpers for group meal print/PDF ──────────────────────────
 // Returns array of {recipe, factor} — factor scales ingredients by serving size.
 // Priority: per-recipe override > per-meal override > group default > no scaling (1)
+// {recipe, factor} pairs for ONE group-meal slot (recipe slot or meal slot).
+function _groupSlotPairs(gm) {
+  const g = selectedGroupMeal;
+  const out = [];
+  const _factor = (r, eff) => {
+    if (eff !== null && parseFloat(eff) === 0) return null;   // skipped
+    const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
+    if (eff && origNum && origNum > 0) return _applyBatchScale(parseFloat(eff), origNum, r.scale_by_batch) / origNum;
+    return 1;
+  };
+  if (gm.type === "recipe") {
+    const r = savedRecipes.find(r => r.id === gm.id);
+    if (!r) return out;
+    const eff = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
+    const f = _factor(r, eff);
+    if (f !== null) out.push({recipe: r, factor: f});
+    return out;
+  }
+  if (gm.type !== "meal") return out;   // section header, etc.
+  const full = savedMeals.find(m => m.id === gm.id);
+  if (!full) return out;
+  const rs = gm.recipe_servings || {};
+  const mealServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
+  if (mealServings !== null && parseFloat(mealServings) === 0) return out;   // skip entire meal
+  const dietBase = gm.dietary_servings != null ? gm.dietary_servings
+                 : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
+  (full.recipes||[]).forEach(mr => {
+    if (mr.dietary && !g.dietary_enabled) return;
+    const base = mr.dietary ? dietBase : mealServings;
+    const r = savedRecipes.find(r => r.id === mr.id);
+    if (!r) return;
+    const eff = rs[mr.id] != null ? rs[mr.id] : base;
+    const f = _factor(r, eff);
+    if (f !== null) out.push({recipe: r, factor: f});
+  });
+  return out;
+}
+
 function _groupAllRecipes() {
   const g = selectedGroupMeal;
   if (!g) return [];
-  const results = [];
-  (g.meals||[]).forEach(gm => {
-    // ── Direct recipe slot ────────────────────────────────────────────────────
-    if (gm.type === "recipe") {
-      const r = savedRecipes.find(r => r.id === gm.id);
-      if (!r) return;
-      const effectiveServings = gm.servings != null ? gm.servings
-                              : (g.default_servings != null ? g.default_servings : null);
-      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
-      const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-      let factor = 1;
-      if (effectiveServings && origNum && origNum > 0) {
-        const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
-        factor = target / origNum;
-      }
-      results.push({recipe: r, factor});
-      return;
-    }
-
-    // ── Meal slot ─────────────────────────────────────────────────────────────
-    const full = savedMeals.find(m => m.id === gm.id);
-    if (!full) return;
-    const rs = gm.recipe_servings || {};
-    const mealServings = gm.servings != null ? gm.servings
-                       : (g.default_servings != null ? g.default_servings : null);
-    if (mealServings !== null && parseFloat(mealServings) === 0) return; // skip entire meal
-    const dietBase = gm.dietary_servings != null ? gm.dietary_servings
-                   : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
-    (full.recipes||[]).forEach(mr => {
-      if (mr.dietary && !g.dietary_enabled) return; // dietary recipes excluded when toggle is off
-      const base = mr.dietary ? dietBase : mealServings;
-      const r = savedRecipes.find(r => r.id === mr.id);
-      if (r) {
-        const effectiveServings = rs[mr.id] != null ? rs[mr.id] : base;
-        if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
-        const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-        let factor = 1;
-        if (effectiveServings && origNum && origNum > 0) {
-          const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
-          factor = target / origNum;
-        }
-        results.push({recipe: r, factor});
-      }
-    });
-  });
-  return results;
+  return (g.meals||[]).flatMap(_groupSlotPairs);
 }
 
 function _groupShoppingEntries() {
@@ -7826,30 +7816,36 @@ function _groupMealIds() {
   return [...new Set((selectedGroupMeal.meals||[]).filter(s => s.type === "meal").map(s => s.id))];
 }
 
+// Build interleaved pages: each meal's recipes, then that meal's serving-line
+// diagram(s), then the next meal — in group order.
+async function _groupRecipePagesInterleaved() {
+  const g = selectedGroupMeal;
+  const pages = [];
+  const seenMeal = new Set();
+  for (const gm of (g.meals||[])) {
+    _groupSlotPairs(gm).forEach(({recipe, factor}) => pages.push(`<div>${buildRecipeBlock(recipe, factor)}</div>`));
+    if (gm.type === "meal" && gm.id != null && !seenMeal.has(gm.id)) {
+      seenMeal.add(gm.id);
+      for (const sec of await _diagramSectionsForMeal(gm.id)) pages.push(sec);
+    }
+  }
+  return pages;
+}
+
 async function printGroupRecipes() {
   if (!selectedGroupMeal) return;
-  const pairs = _groupAllRecipes();
-  const dpages = await _diagramPagesForMeals(_groupMealIds());   // tied serving-line setups
-  if (!pairs.length && !dpages) { showAlert("No recipes found in the selected meals."); return; }
-  let html = buildMealRecipesHtml(pairs.map(p => p.recipe), pairs.map(p => p.factor));
-  if (dpages) {
-    const inject = pairs.length ? dpages : dpages.replace(/^<div class="page-break"><\/div>/, "");
-    html = html.replace("</body>", inject + "</body>");
-  }
-  doPrint(html);
+  const pages = await _groupRecipePagesInterleaved();
+  if (!pages.length) { showAlert("No recipes found in the selected meals."); return; }
+  const body = pages.join(`<div class="page-break"></div>`);
+  doPrint(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(selectedGroupMeal.name)}</title><style>${PRINT_CSS}</style></head><body>${body}</body></html>`);
 }
 
 async function exportGroupRecipesPdf() {
   if (!selectedGroupMeal) return;
-  const pairs = _groupAllRecipes();
-  const dpages = await _diagramPagesForMeals(_groupMealIds());
-  if (!pairs.length && !dpages) { showAlert("No recipes found in the selected meals."); return; }
-  let html = buildMealRecipesHtml(pairs.map(p => p.recipe), pairs.map(p => p.factor));
-  if (dpages) {
-    const inject = pairs.length ? dpages : dpages.replace(/^<div class="page-break"><\/div>/, "");
-    html = html.replace("</body>", inject + "</body>");
-  }
-  exportPdf(html, selectedGroupMeal.name + " - Recipes");
+  const pages = await _groupRecipePagesInterleaved();
+  if (!pages.length) { showAlert("No recipes found in the selected meals."); return; }
+  const body = pages.join(`<div class="page-break"></div>`);
+  exportPdf(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(selectedGroupMeal.name)}</title><style>${PRINT_CSS}</style></head><body>${body}</body></html>`, selectedGroupMeal.name + " - Recipes");
 }
 
 function printGroupShopping() {
@@ -8372,14 +8368,15 @@ function _lineCellHTML(it, x, y, w, h) {
     const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:42%;transform:translateX(-50%);max-width:${labelMax}px;z-index:2">${food}${util}</div>`;
     return `${open}${del}${shape}${labels}</div>`;
   }
-  // Small item — shape on top, labels beneath.
-  const LA = Math.min(h * 0.42, 24);
-  const shH = Math.max(8, h - LA);
+  // Small item — shape pinned at a fixed line; labels grow downward beneath it,
+  // so items stay aligned even when a label wraps to two lines.
   let sw, sh;
-  if (t.shape === "circle") { const dd = Math.min(w * 0.9, shH * 0.95) * scale; sw = sh = dd; }
-  else { sw = w * 0.9 * scale; sh = shH * 0.9; }
-  const shape = `<div class="line-shape" style="width:${sw}px;height:${sh}px;border-color:${t.color};border-radius:${rad}"></div>`;
-  return `${open}${del}${shape}<div class="line-cell-labels" style="max-width:${labelMax}px">${food}${util}</div></div>`;
+  if (t.shape === "circle") { const dd = Math.min(w * 0.9, h * 0.44) * scale; sw = sh = dd; }
+  else { sw = w * 0.9 * scale; sh = h * 0.44 * scale; }
+  const cyShape = h * 0.38;
+  const shape = `<div class="line-shape" style="position:absolute;left:50%;top:${cyShape}px;transform:translate(-50%,-50%);width:${sw}px;height:${sh}px;border-color:${t.color};border-radius:${rad}"></div>`;
+  const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:${cyShape + sh/2 + 3}px;transform:translateX(-50%);max-width:${labelMax}px">${food}${util}</div>`;
+  return `${open}${del}${shape}${labels}</div>`;
 }
 
 // Cells for one slot: 1 item fills the slot (centered); 2 items stack top/bottom.
@@ -8600,23 +8597,24 @@ function _linePrintCell(it, x, y, w, h) {
       <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>
       <div style="position:absolute;left:50%;top:42%;transform:translateX(-50%);max-width:${labelMax}px;text-align:center">${food}${util}</div></div>`;
   }
-  const LA = Math.min(h * 0.42, 24);
-  const shH = Math.max(8, h - LA);
   let sw, sh;
-  if (t.shape === "circle") { const dd = Math.min(w * 0.9, shH * 0.95) * scale; sw = sh = dd; }
-  else { sw = w * 0.9 * scale; sh = shH * 0.9; }
-  const shape = `<div style="width:${sw}px;height:${sh}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>`;
-  return `<div style="${box};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;max-width:${labelMax}px">${shape}${food}${util}</div>`;
+  if (t.shape === "circle") { const dd = Math.min(w * 0.9, h * 0.44) * scale; sw = sh = dd; }
+  else { sw = w * 0.9 * scale; sh = h * 0.44 * scale; }
+  const cyShape = h * 0.38;
+  return `<div style="${box}">
+    <div style="position:absolute;left:50%;top:${cyShape}px;transform:translate(-50%,-50%);width:${sw}px;height:${sh}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>
+    <div style="position:absolute;left:50%;top:${cyShape + sh/2 + 3}px;transform:translateX(-50%);max-width:${labelMax}px;text-align:center">${food}${util}</div></div>`;
 }
 // Positioned tables + slot items for a diagram's data (static, no editing chrome).
 function _lineDiagramEls(data) {
   const {w, h} = _lineCanvasSize();
   const sy = _lineServingRowY(), cy = _lineCondRowY();
-  const tbl = (x, y) => `<div style="position:absolute;left:${x}px;top:${y}px;width:${LINE_TABLE_W}px;height:${LINE_TABLE_H}px;border:2px solid #000;box-sizing:border-box"></div>`;
+  // One solid rectangle spanning each whole line (no seam between tables).
+  const lineRect = (x, y, ww) => `<div style="position:absolute;left:${x}px;top:${y}px;width:${ww}px;height:${LINE_TABLE_H}px;border:2px solid #000;box-sizing:border-box"></div>`;
   let els = `<div style="position:absolute;left:${LINE_PAD}px;top:${sy-26}px;font:800 12px sans-serif;color:#000;letter-spacing:0.5px">SERVING LINE</div>`;
-  for (let i=0;i<LINE_SERV_TABLES;i++) els += tbl(LINE_PAD+i*LINE_TABLE_W, sy);
+  els += lineRect(LINE_PAD, sy, LINE_SERV_TABLES*LINE_TABLE_W);
   els += `<div style="position:absolute;left:${LINE_PAD}px;top:${cy-26}px;font:800 12px sans-serif;color:#000;letter-spacing:0.5px">CONDIMENT LINE</div>`;
-  for (let i=0;i<LINE_COND_TABLES;i++) els += tbl(LINE_PAD+i*LINE_TABLE_W, cy);
+  els += lineRect(LINE_PAD, cy, LINE_COND_TABLES*LINE_TABLE_W);
   ["serving","condiment"].forEach(line => {
     const g = _lineSlotGeom(line);
     for (let s=0; s<g.n; s++) {
@@ -8633,23 +8631,26 @@ function _lineDiagramEls(data) {
   });
   return {els, w, h};
 }
-// One diagram as a self-contained print section, scaled to fit maxW x maxH.
+// One diagram as a print section, ROTATED 90° so a wide layout fits a portrait
+// page (the reader turns the paper). Fits within maxW x maxH (portrait area).
 function _lineDiagramSection(d, maxW, maxH, mealName) {
   const {els, w, h} = _lineDiagramEls(_lineMigrateData(d.data || {}));
-  const ps = Math.min(maxW / w, maxH / h);
-  const sub = mealName ? ` <span style="font-weight:400;color:#666">— ${escP(mealName)}</span>` : "";
-  return `<div class="line-diagram-page" style="page-break-inside:avoid">
-    <h2 style="margin:0 0 8px;font-family:sans-serif">${escP(d.name)}${sub}</h2>
-    <div style="width:${Math.ceil(w*ps)}px;height:${Math.ceil(h*ps)}px">
-      <div style="position:relative;width:${w}px;height:${h}px;transform:scale(${ps});transform-origin:top left">${els}</div>
+  // Rotated footprint is h×w, so scale to fit that into the page area.
+  const ps = Math.min(maxW / h, maxH / w);
+  const fw = Math.ceil(h * ps), fh = Math.ceil(w * ps);
+  const sub = mealName ? ` — ${escP(mealName)}` : "";
+  return `<div class="line-diagram-page" style="page-break-inside:avoid;margin-bottom:10px">
+    <h3 style="margin:0 0 6px;font-family:sans-serif">${escP(d.name)}${sub} <span style="font-weight:400;color:#666;font-size:0.82em">(turn the page sideways to view)</span></h3>
+    <div style="position:relative;width:${fw}px;height:${fh}px">
+      <div style="position:absolute;top:0;left:0;width:${w}px;height:${h}px;transform-origin:0 0;transform:translateX(${h*ps}px) rotate(90deg) scale(${ps})">${els}</div>
     </div></div>`;
 }
 function _lineBuildPrintHtml() {
   const d = selectedDiagram; if (!d) return "";
   const mealName = d.meal_id ? ((_lineMeals.find(m => String(m.id)===String(d.meal_id))||{}).name || "") : "";
-  const section = _lineDiagramSection(d, 1030, 640, mealName);   // landscape A4 printable
+  const section = _lineDiagramSection(d, 680, 920, mealName);   // portrait page, rotated diagram
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(d.name)}</title>
-    <style>@page { size: A4 landscape; margin: 8mm; } @page landscapeDiagram { size: A4 landscape; margin: 8mm; } .line-diagram-page { page: landscapeDiagram; } body { margin:0; font-family:sans-serif; }</style></head>
+    <style>@page { size: letter portrait; margin: 0.4in; } body { margin:0; font-family:sans-serif; }</style></head>
     <body>${section}</body></html>`;
 }
 function linePrint()     { const html = _lineBuildPrintHtml(); if (html) doPrint(html); }
@@ -8657,21 +8658,28 @@ function lineExportPdf() { const html = _lineBuildPrintHtml(); if (html) exportP
 
 // Fetch full tied diagrams for a set of meal ids and render them as print pages
 // (portrait-fit). Used to attach line setups to meal / group-meal printouts.
+// Full print sections for every serving-line diagram tied to one meal.
+async function _diagramSectionsForMeal(mid) {
+  const out = [];
+  if (mid == null) return out;
+  let list = [];
+  try { list = await (await fetch(`/line-diagrams?meal_id=${mid}`)).json(); } catch {}
+  for (const meta of (list || [])) {
+    let full = null;
+    try { full = await (await fetch(`/line-diagrams/${meta.id}`)).json(); } catch {}
+    if (!full || full.error) continue;
+    out.push(_lineDiagramSection(full, 660, 900, meta.meal_name || ""));
+  }
+  return out;
+}
+
 async function _diagramPagesForMeals(mealIds) {
   const seen = new Set();
   let out = "";
   for (const mid of mealIds) {
-    if (mid == null) continue;
-    let list = [];
-    try { list = await (await fetch(`/line-diagrams?meal_id=${mid}`)).json(); } catch {}
-    for (const meta of (list || [])) {
-      if (seen.has(meta.id)) continue;
-      seen.add(meta.id);
-      let full = null;
-      try { full = await (await fetch(`/line-diagrams/${meta.id}`)).json(); } catch {}
-      if (!full || full.error) continue;
-      out += `<div class="page-break"></div>` + _lineDiagramSection(full, 940, 620, meta.meal_name || "");
-    }
+    if (mid == null || seen.has(mid)) continue;
+    seen.add(mid);
+    for (const sec of await _diagramSectionsForMeal(mid)) out += `<div class="page-break"></div>` + sec;
   }
   return out;
 }
