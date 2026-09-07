@@ -340,7 +340,7 @@
     .grid-cat-badge { display:inline-block; background:#f0e9e9; color:var(--red); border-radius:10px; padding:0.1rem 0.5rem; font-size:0.72rem; font-weight:700; margin-top:0.25rem; }
 
     /* Meals tab */
-    #tab-meals, #tab-groupmeal { max-width:none; padding-left:1.5rem; padding-right:1.5rem; }
+    #tab-meals, #tab-groupmeal, #tab-lines { max-width:none; padding-left:1.5rem; padding-right:1.5rem; }
     #meals-detail-view { max-width:860px; margin:0 auto; }
     .meal-recipe-row { display:flex; align-items:center; gap:0.8rem; padding:0.6rem 0; border-bottom:1px solid var(--border); cursor:grab; }
     .meal-recipe-row:active { cursor:grabbing; }
@@ -3843,19 +3843,20 @@ function _mealPrintBlocks(m) {
   return parts.map((b, i) => i < parts.length - 1 ? b + `<div class="page-break"></div>` : b).join("");
 }
 
-function printMeal() {
+async function printMeal() {
   const m = selectedMeal;
   if (!m) return;
-  if (!m.recipes || m.recipes.length === 0) { showAlert("No recipes in this meal to print."); return; }
   const blocks = _mealPrintBlocks(m);
-  if (!blocks) { showAlert("Recipe data not loaded yet."); return; }
+  const dpages = await _diagramPagesForMeals([m.id]);   // tied serving-line setups
+  if (!blocks && !dpages) { showAlert("Nothing to print for this meal yet."); return; }
+  const body = blocks ? blocks + dpages : dpages.replace(/^<div class="page-break"><\/div>/, "");
 
   const html = `<!DOCTYPE html><html><head>
 <meta charset="UTF-8"/>
 <title>${escP(m.name||"Meal")}</title>
 <style>${PRINT_CSS}</style>
 </head><body>
-${blocks}
+${body}
 </body></html>`;
   doPrint(html);
 }
@@ -6618,13 +6619,15 @@ async function exportRecipeAs(fmt) {
   }
 }
 
-function exportMealPdf() {
+async function exportMealPdf() {
   const m = selectedMeal;
   if (!m) return;
   const blocks = _mealPrintBlocks(m);
-  if (!blocks) { showAlert("No recipes found."); return; }
+  const dpages = await _diagramPagesForMeals([m.id]);
+  if (!blocks && !dpages) { showAlert("No recipes found."); return; }
+  const body = blocks ? blocks + dpages : dpages.replace(/^<div class="page-break"><\/div>/, "");
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-<title>${escP(m.name||"meal")}</title><style>${PRINT_CSS}</style></head><body>${blocks}</body></html>`;
+<title>${escP(m.name||"meal")}</title><style>${PRINT_CSS}</style></head><body>${body}</body></html>`;
   exportPdf(html, m.name || "meal");
 }
 
@@ -7823,18 +7826,34 @@ function _groupShoppingEntries() {
   });
 }
 
-function printGroupRecipes() {
-  if (!selectedGroupMeal) return;
-  const pairs = _groupAllRecipes();
-  if (!pairs.length) { showAlert("No recipes found in the selected meals."); return; }
-  doPrint(buildMealRecipesHtml(pairs.map(p => p.recipe), pairs.map(p => p.factor)));
+function _groupMealIds() {
+  return [...new Set((selectedGroupMeal.meals||[]).filter(s => s.type === "meal").map(s => s.id))];
 }
 
-function exportGroupRecipesPdf() {
+async function printGroupRecipes() {
   if (!selectedGroupMeal) return;
   const pairs = _groupAllRecipes();
-  if (!pairs.length) { showAlert("No recipes found in the selected meals."); return; }
-  exportPdf(buildMealRecipesHtml(pairs.map(p => p.recipe), pairs.map(p => p.factor)), selectedGroupMeal.name + " - Recipes");
+  const dpages = await _diagramPagesForMeals(_groupMealIds());   // tied serving-line setups
+  if (!pairs.length && !dpages) { showAlert("No recipes found in the selected meals."); return; }
+  let html = buildMealRecipesHtml(pairs.map(p => p.recipe), pairs.map(p => p.factor));
+  if (dpages) {
+    const inject = pairs.length ? dpages : dpages.replace(/^<div class="page-break"><\/div>/, "");
+    html = html.replace("</body>", inject + "</body>");
+  }
+  doPrint(html);
+}
+
+async function exportGroupRecipesPdf() {
+  if (!selectedGroupMeal) return;
+  const pairs = _groupAllRecipes();
+  const dpages = await _diagramPagesForMeals(_groupMealIds());
+  if (!pairs.length && !dpages) { showAlert("No recipes found in the selected meals."); return; }
+  let html = buildMealRecipesHtml(pairs.map(p => p.recipe), pairs.map(p => p.factor));
+  if (dpages) {
+    const inject = pairs.length ? dpages : dpages.replace(/^<div class="page-break"><\/div>/, "");
+    html = html.replace("</body>", inject + "</body>");
+  }
+  exportPdf(html, selectedGroupMeal.name + " - Recipes");
 }
 
 function printGroupShopping() {
@@ -8117,7 +8136,7 @@ let   _lineScale = 1;                                // fit-to-view scale factor
 const LINE_ITEM_TYPES = {
   chafer:  {label:"Hotel Pan Chafer", shape:"rect",   w:66,  h:104, color:"#c0392b"},
   gravy:   {label:"Gravy Chafer",     shape:"circle", w:58,  h:58,  color:"#c0392b"},
-  linepan: {label:"Hotel Line Pan",   shape:"rect",   w:150, h:88,  color:"#b9770e"},
+  linepan: {label:"Hotel Line Pan",   shape:"rect",   w:104, h:140, color:"#b9770e"},
   hotpad:  {label:"Hot Pad",          shape:"rect",   w:84,  h:84,  color:"#b9770e"},
   plates:  {label:"Plate Stack",      shape:"circle", w:44,  h:44,  color:"#2c6e49"},
   silver:  {label:"Silverware Holder",shape:"circle", w:15,  h:15,  color:"#2c6e49"},
@@ -8445,8 +8464,8 @@ function _lineFitScale() {
   if (!fit || !canvas || !selectedDiagram) return;
   const {w, h} = _lineCanvasSize();
   const availW = fit.clientWidth || w;
-  const availH = Math.max(340, (window.innerHeight || 800) - 250);
-  let s = Math.min(availW / w, availH / h, 1.7);
+  const availH = Math.max(360, (window.innerHeight || 800) - 210);
+  let s = Math.min(availW / w, availH / h, 2.6);
   if (!isFinite(s) || s <= 0) s = 1;
   _lineScale = s;
   canvas.style.transform = `scale(${s})`;
@@ -8517,9 +8536,8 @@ async function openMealServingLine(mid) {
 }
 
 // ── Print / PDF — fits a landscape A4 page ────────────────────────────────────
-function _lineBuildPrintHtml() {
-  const d = selectedDiagram; if (!d) return "";
-  const data = d.data;
+// Positioned tables + items for a diagram's data (static, no editing chrome).
+function _lineDiagramEls(data) {
   const {w, h} = _lineCanvasSize();
   const sy = _lineServingRowY(), cy = _lineCondRowY();
   const tbl = (x, y) => `<div style="position:absolute;left:${x}px;top:${y}px;width:${LINE_TABLE_W}px;height:${LINE_TABLE_H}px;border:2px solid #b98a5e;border-radius:6px;background:#f6ecdd;box-sizing:border-box"></div>`;
@@ -8541,21 +8559,50 @@ function _lineBuildPrintHtml() {
       : `<div style="position:absolute;left:50%;transform:translateX(-50%);${above?"bottom:calc(100% + 2px)":"top:calc(100% + 2px)"};min-width:70px;max-width:130px;text-align:center;background:#fff;border:1px solid #ccc;border-radius:4px;padding:1px 3px">${lbl}</div>`;
     els += `<div style="position:absolute;left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;border:1.5px solid ${t.color};border-radius:${radius};background:${bg};box-sizing:border-box">${lblBox}</div>`;
   });
-  // Scale the whole diagram to fit inside a landscape-A4 printable area.
-  const PW = 1030, PH = 640;
-  const ps = Math.min(PW / w, PH / h);
-  const mealName = d.meal_id ? ((_lineMeals.find(m => String(m.id)===String(d.meal_id))||{}).name || "") : "";
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(d.name)}</title>
-    <style>@page { size: A4 landscape; margin: 8mm; } body { margin:0; font-family:sans-serif; }</style></head>
-    <body>
-    <h2 style="margin:0 0 8px">${escP(d.name)}${mealName?` <span style="font-weight:400;color:#666">— ${escP(mealName)}</span>`:""}</h2>
+  return {els, w, h};
+}
+// One diagram as a self-contained print section, scaled to fit maxW x maxH.
+function _lineDiagramSection(d, maxW, maxH, mealName) {
+  const {els, w, h} = _lineDiagramEls(d.data || {});
+  const ps = Math.min(maxW / w, maxH / h);
+  const sub = mealName ? ` <span style="font-weight:400;color:#666">— ${escP(mealName)}</span>` : "";
+  return `<div style="page-break-inside:avoid">
+    <h2 style="margin:0 0 8px;font-family:sans-serif">📐 ${escP(d.name)}${sub}</h2>
     <div style="width:${Math.ceil(w*ps)}px;height:${Math.ceil(h*ps)}px">
       <div style="position:relative;width:${w}px;height:${h}px;transform:scale(${ps});transform-origin:top left">${els}</div>
-    </div>
-    </body></html>`;
+    </div></div>`;
+}
+function _lineBuildPrintHtml() {
+  const d = selectedDiagram; if (!d) return "";
+  const mealName = d.meal_id ? ((_lineMeals.find(m => String(m.id)===String(d.meal_id))||{}).name || "") : "";
+  const section = _lineDiagramSection(d, 1030, 640, mealName);   // landscape A4 printable
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(d.name)}</title>
+    <style>@page { size: A4 landscape; margin: 8mm; } body { margin:0; font-family:sans-serif; }</style></head>
+    <body>${section}</body></html>`;
 }
 function linePrint()     { const html = _lineBuildPrintHtml(); if (html) doPrint(html); }
 function lineExportPdf() { const html = _lineBuildPrintHtml(); if (html) exportPdf(html, (selectedDiagram && selectedDiagram.name) || "line-setup"); }
+
+// Fetch full tied diagrams for a set of meal ids and render them as print pages
+// (portrait-fit). Used to attach line setups to meal / group-meal printouts.
+async function _diagramPagesForMeals(mealIds) {
+  const seen = new Set();
+  let out = "";
+  for (const mid of mealIds) {
+    if (mid == null) continue;
+    let list = [];
+    try { list = await (await fetch(`/line-diagrams?meal_id=${mid}`)).json(); } catch {}
+    for (const meta of (list || [])) {
+      if (seen.has(meta.id)) continue;
+      seen.add(meta.id);
+      let full = null;
+      try { full = await (await fetch(`/line-diagrams/${meta.id}`)).json(); } catch {}
+      if (!full || full.error) continue;
+      out += `<div class="page-break"></div>` + _lineDiagramSection(full, 700, 940, meta.meal_name || "");
+    }
+  }
+  return out;
+}
 
 function doPrint(fullHtml) {
   // Inject content into the current window and call window.print().
