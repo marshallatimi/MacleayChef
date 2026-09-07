@@ -8131,7 +8131,7 @@ let   _lineScale = 1;        // fit-to-view scale factor
 // into fixed slots on the tables.
 const LINE_ITEM_TYPES = {
   chafer:  {label:"Hotel Pan Chafer", shape:"rect",   color:"#c0392b"},
-  gravy:   {label:"Gravy Chafer",     shape:"circle", color:"#c0392b"},
+  gravy:   {label:"Gravy Chafer",     shape:"circle", color:"#c0392b", scale:0.78},
   linepan: {label:"Hotel Line Pan",   shape:"rect",   color:"#b9770e"},
   hotpad:  {label:"Hot Pad",          shape:"rect",   color:"#b9770e"},
   service: {label:"Plates/Silverware/Napkins", shape:"rect", color:"#2c6e49"},
@@ -8332,30 +8332,48 @@ function lineRenderEditor() {
   _lineFitScale();
 }
 
+// Pressing Enter in a label commits (blur) instead of inserting a newline.
+function _lineLblKey(e) { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } }
+
 // One item tile inside a slot cell (x,y,w,h are the cell's logical rect).
+// Big enough items carry their labels on top of the shape; small ones put the
+// labels underneath.
 function _lineCellHTML(it, x, y, w, h) {
   const t = LINE_ITEM_TYPES[it.type] || LINE_ITEM_TYPES.label;
   const sel = it.id === _lineSelId;
   const isText = t.shape === "text";
-  const LA = Math.min(h * 0.42, 26);            // room for the two labels
-  const shH = Math.max(8, h - LA);
-  let shape = "";
-  if (!isText) {
-    let sw, sh;
-    if (t.shape === "circle") { const dd = Math.min(w * 0.8, shH * 0.92); sw = sh = dd; }
-    else { sw = w * 0.9; sh = shH * 0.9; }
-    shape = `<div class="line-shape" style="width:${sw}px;height:${sh}px;border-color:${t.color};border-radius:${t.shape==="circle"?"50%":"6px"}"></div>`;
-  }
+  const scale = t.scale || 1;
+  const rad = t.shape === "circle" ? "50%" : "6px";
   const foodPh = isText ? "label…" : "food…";
   const food = `<div class="line-lbl line-lbl-food" contenteditable="true" spellcheck="false" data-ph="${foodPh}"
-      onpointerdown="event.stopPropagation()" onblur="lineSetLabel('${it.id}','food',this.innerText)">${esc(it.food||"")}</div>`;
+      onpointerdown="event.stopPropagation()" onkeydown="_lineLblKey(event)" onblur="lineSetLabel('${it.id}','food',this.innerText)">${esc(it.food||"")}</div>`;
   const util = isText ? "" : `<div class="line-lbl line-lbl-util" contenteditable="true" spellcheck="false" data-ph="utensil…"
-      onpointerdown="event.stopPropagation()" onblur="lineSetLabel('${it.id}','util',this.innerText)">${esc(it.util||"")}</div>`;
+      onpointerdown="event.stopPropagation()" onkeydown="_lineLblKey(event)" onblur="lineSetLabel('${it.id}','util',this.innerText)">${esc(it.util||"")}</div>`;
   const del = sel ? `<button class="line-cell-del" onpointerdown="event.stopPropagation()" onclick="lineDeleteItem('${it.id}')" title="Remove">✕</button>` : "";
-  return `<div class="line-cell${sel?" sel":""}" data-id="${it.id}"
-      style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"
-      onpointerdown="lineStartMove(event,'${it.id}')">
-      ${del}${shape}<div class="line-cell-labels">${food}${util}</div></div>`;
+  const open = `<div class="line-cell${sel?" sel":""}" data-id="${it.id}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px" onpointerdown="lineStartMove(event,'${it.id}')">`;
+
+  if (isText) {   // freestanding caption — just the text, centered
+    return `${open}${del}<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${w-6}px">${food}</div></div>`;
+  }
+
+  // Shape sized to fill the cell; decide inside vs. below from that footprint.
+  const fillW = (t.shape === "circle" ? Math.min(w, h) * 0.9 : w * 0.94) * scale;
+  const fillH = (t.shape === "circle" ? fillW : h * 0.9 * scale);
+  const inside = fillW >= 70 && fillH >= 46;
+
+  if (inside) {
+    const shape = `<div class="line-shape" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border-color:${t.color};border-radius:${rad}"></div>`;
+    const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${w-6}px;z-index:2">${food}${util}</div>`;
+    return `${open}${del}${shape}${labels}</div>`;
+  }
+  // Small item — shape on top, labels beneath.
+  const LA = Math.min(h * 0.42, 24);
+  const shH = Math.max(8, h - LA);
+  let sw, sh;
+  if (t.shape === "circle") { const dd = Math.min(w * 0.9, shH * 0.95) * scale; sw = sh = dd; }
+  else { sw = w * 0.9 * scale; sh = shH * 0.9; }
+  const shape = `<div class="line-shape" style="width:${sw}px;height:${sh}px;border-color:${t.color};border-radius:${rad}"></div>`;
+  return `${open}${del}${shape}<div class="line-cell-labels">${food}${util}</div></div>`;
 }
 
 // Cells for one slot: 1 item fills the slot (centered); 2 items stack top/bottom.
@@ -8559,18 +8577,29 @@ async function openMealServingLine(mid) {
 function _linePrintCell(it, x, y, w, h) {
   const t = LINE_ITEM_TYPES[it.type] || LINE_ITEM_TYPES.label;
   const isText = t.shape === "text";
-  const LA = Math.min(h * 0.42, 26);
-  const shH = Math.max(8, h - LA);
-  let shape = "";
-  if (!isText) {
-    let sw, sh;
-    if (t.shape === "circle") { const dd = Math.min(w * 0.8, shH * 0.92); sw = sh = dd; }
-    else { sw = w * 0.9; sh = shH * 0.9; }
-    shape = `<div style="width:${sw}px;height:${sh}px;border:1.5px solid ${t.color};border-radius:${t.shape==="circle"?"50%":"6px"};box-sizing:border-box"></div>`;
-  }
+  const scale = t.scale || 1;
+  const rad = t.shape === "circle" ? "50%" : "6px";
   const food = `<div style="font:800 9px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#111;text-align:center">${escP(it.food||"")}</div>`;
   const util = isText ? "" : `<div style="font:600 8px sans-serif;line-height:1.05;overflow-wrap:anywhere;color:#555;text-align:center">${escP(it.util||"")}</div>`;
-  return `<div style="position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;box-sizing:border-box">${shape}${food}${util}</div>`;
+  const box = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;box-sizing:border-box`;
+  if (isText) {
+    return `<div style="${box};display:flex;align-items:center;justify-content:center;text-align:center">${food}</div>`;
+  }
+  const fillW = (t.shape === "circle" ? Math.min(w, h) * 0.9 : w * 0.94) * scale;
+  const fillH = (t.shape === "circle" ? fillW : h * 0.9 * scale);
+  const inside = fillW >= 70 && fillH >= 46;
+  if (inside) {
+    return `<div style="${box}">
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>
+      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${w-6}px">${food}${util}</div></div>`;
+  }
+  const LA = Math.min(h * 0.42, 24);
+  const shH = Math.max(8, h - LA);
+  let sw, sh;
+  if (t.shape === "circle") { const dd = Math.min(w * 0.9, shH * 0.95) * scale; sw = sh = dd; }
+  else { sw = w * 0.9 * scale; sh = shH * 0.9; }
+  const shape = `<div style="width:${sw}px;height:${sh}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>`;
+  return `<div style="${box};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">${shape}${food}${util}</div>`;
 }
 // Positioned tables + slot items for a diagram's data (static, no editing chrome).
 function _lineDiagramEls(data) {
