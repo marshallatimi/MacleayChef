@@ -3720,6 +3720,9 @@ const PRINT_CSS = `
   .dir-hdr { font-weight:bold; font-size:11pt; line-height:1.35; margin:4pt 0 0; }
   .directions-text { font-size:11pt; line-height:1.55; white-space:pre-wrap; word-break:break-word; margin:0; }
   .page-break { page-break-after:always; }
+  /* Serving-line diagram pages print landscape, even amid portrait recipes */
+  @page landscapeDiagram { size: A4 landscape; margin: 0.4in; }
+  .line-diagram-page { page: landscapeDiagram; }
 `;
 
 // Build the inner body HTML for one recipe at a given serving scale factor
@@ -8121,7 +8124,7 @@ let _lineSelId        = null;   // id of the selected item
 let _lineSaveTimer    = null;
 let _lineDrag         = null;   // active pointer-drag state
 
-const LINE_TABLE_W = 360, LINE_TABLE_H = 150, LINE_PAD = 26, LINE_ROW_GAP = 96;
+const LINE_TABLE_W = 404, LINE_TABLE_H = 178, LINE_PAD = 26, LINE_ROW_GAP = 92;
 const LINE_SERV_TABLES = 2, LINE_COND_TABLES = 1;   // fixed line lengths
 const LINE_SERV_SLOTS = 8;   // 4 slots per serving table × 2 tables
 const LINE_COND_SLOTS = 8;   // condiment columns — each holds 2 stacked or 1 centered
@@ -8364,7 +8367,9 @@ function _lineCellHTML(it, x, y, w, h) {
 
   if (inside) {
     const shape = `<div class="line-shape" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border-color:${t.color};border-radius:${rad}"></div>`;
-    const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${labelMax}px;z-index:2">${food}${util}</div>`;
+    // Anchor the labels' top at a fixed line so the food name lines up across a
+    // row and extra wrapped lines only grow downward.
+    const labels = `<div class="line-cell-labels" style="position:absolute;left:50%;top:42%;transform:translateX(-50%);max-width:${labelMax}px;z-index:2">${food}${util}</div>`;
     return `${open}${del}${shape}${labels}</div>`;
   }
   // Small item — shape on top, labels beneath.
@@ -8593,7 +8598,7 @@ function _linePrintCell(it, x, y, w, h) {
   if (inside) {
     return `<div style="${box}">
       <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${fillW}px;height:${fillH}px;border:1.5px solid ${t.color};border-radius:${rad};box-sizing:border-box"></div>
-      <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:${labelMax}px">${food}${util}</div></div>`;
+      <div style="position:absolute;left:50%;top:42%;transform:translateX(-50%);max-width:${labelMax}px;text-align:center">${food}${util}</div></div>`;
   }
   const LA = Math.min(h * 0.42, 24);
   const shH = Math.max(8, h - LA);
@@ -8607,16 +8612,16 @@ function _linePrintCell(it, x, y, w, h) {
 function _lineDiagramEls(data) {
   const {w, h} = _lineCanvasSize();
   const sy = _lineServingRowY(), cy = _lineCondRowY();
-  const tbl = (x, y) => `<div style="position:absolute;left:${x}px;top:${y}px;width:${LINE_TABLE_W}px;height:${LINE_TABLE_H}px;border:2px solid #b98a5e;border-radius:6px;background:#f6ecdd;box-sizing:border-box"></div>`;
-  let els = `<div style="position:absolute;left:${LINE_PAD}px;top:${sy-26}px;font:800 12px sans-serif;color:#555;letter-spacing:0.5px">SERVING LINE</div>`;
+  const tbl = (x, y) => `<div style="position:absolute;left:${x}px;top:${y}px;width:${LINE_TABLE_W}px;height:${LINE_TABLE_H}px;border:2px solid #000;box-sizing:border-box"></div>`;
+  let els = `<div style="position:absolute;left:${LINE_PAD}px;top:${sy-26}px;font:800 12px sans-serif;color:#000;letter-spacing:0.5px">SERVING LINE</div>`;
   for (let i=0;i<LINE_SERV_TABLES;i++) els += tbl(LINE_PAD+i*LINE_TABLE_W, sy);
-  els += `<div style="position:absolute;left:${LINE_PAD}px;top:${cy-26}px;font:800 12px sans-serif;color:#555;letter-spacing:0.5px">CONDIMENT LINE</div>`;
+  els += `<div style="position:absolute;left:${LINE_PAD}px;top:${cy-26}px;font:800 12px sans-serif;color:#000;letter-spacing:0.5px">CONDIMENT LINE</div>`;
   for (let i=0;i<LINE_COND_TABLES;i++) els += tbl(LINE_PAD+i*LINE_TABLE_W, cy);
   ["serving","condiment"].forEach(line => {
     const g = _lineSlotGeom(line);
     for (let s=0; s<g.n; s++) {
       const r = _lineSlotRect(line, s);
-      if (s > 0) els += `<div style="position:absolute;left:${r.x}px;top:${r.y}px;width:1px;height:${r.h}px;background:#d8c3a8"></div>`;
+      if (s > 0) els += `<div style="position:absolute;left:${r.x}px;top:${r.y}px;width:1px;height:${r.h}px;background:#000"></div>`;
       const cell = (data[line] && data[line][s]) || [];
       const n = cell.length;
       cell.forEach((it, i) => {
@@ -8633,8 +8638,8 @@ function _lineDiagramSection(d, maxW, maxH, mealName) {
   const {els, w, h} = _lineDiagramEls(_lineMigrateData(d.data || {}));
   const ps = Math.min(maxW / w, maxH / h);
   const sub = mealName ? ` <span style="font-weight:400;color:#666">— ${escP(mealName)}</span>` : "";
-  return `<div style="page-break-inside:avoid">
-    <h2 style="margin:0 0 8px;font-family:sans-serif">📐 ${escP(d.name)}${sub}</h2>
+  return `<div class="line-diagram-page" style="page-break-inside:avoid">
+    <h2 style="margin:0 0 8px;font-family:sans-serif">${escP(d.name)}${sub}</h2>
     <div style="width:${Math.ceil(w*ps)}px;height:${Math.ceil(h*ps)}px">
       <div style="position:relative;width:${w}px;height:${h}px;transform:scale(${ps});transform-origin:top left">${els}</div>
     </div></div>`;
@@ -8644,7 +8649,7 @@ function _lineBuildPrintHtml() {
   const mealName = d.meal_id ? ((_lineMeals.find(m => String(m.id)===String(d.meal_id))||{}).name || "") : "";
   const section = _lineDiagramSection(d, 1030, 640, mealName);   // landscape A4 printable
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>${escP(d.name)}</title>
-    <style>@page { size: A4 landscape; margin: 8mm; } body { margin:0; font-family:sans-serif; }</style></head>
+    <style>@page { size: A4 landscape; margin: 8mm; } @page landscapeDiagram { size: A4 landscape; margin: 8mm; } .line-diagram-page { page: landscapeDiagram; } body { margin:0; font-family:sans-serif; }</style></head>
     <body>${section}</body></html>`;
 }
 function linePrint()     { const html = _lineBuildPrintHtml(); if (html) doPrint(html); }
@@ -8665,7 +8670,7 @@ async function _diagramPagesForMeals(mealIds) {
       let full = null;
       try { full = await (await fetch(`/line-diagrams/${meta.id}`)).json(); } catch {}
       if (!full || full.error) continue;
-      out += `<div class="page-break"></div>` + _lineDiagramSection(full, 700, 940, meta.meal_name || "");
+      out += `<div class="page-break"></div>` + _lineDiagramSection(full, 940, 620, meta.meal_name || "");
     }
   }
   return out;
