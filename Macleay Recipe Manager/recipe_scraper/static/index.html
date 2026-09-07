@@ -8119,12 +8119,12 @@ const LINE_ITEM_TYPES = {
   gravy:   {label:"Gravy Chafer",     shape:"circle", w:58,  h:58,  color:"#c0392b"},
   linepan: {label:"Hotel Line Pan",   shape:"rect",   w:150, h:88,  color:"#b9770e"},
   hotpad:  {label:"Hot Pad",          shape:"rect",   w:84,  h:84,  color:"#b9770e"},
-  plates:  {label:"Plate Stack",      shape:"circle", w:50,  h:50,  color:"#2c6e49"},
-  silver:  {label:"Silverware Holder",shape:"circle", w:46,  h:46,  color:"#2c6e49"},
-  napkins: {label:"Napkin Holder",    shape:"basket", w:60,  h:46,  color:"#2c6e49"},
-  bowl:    {label:"Topping Bowl",     shape:"circle", w:52,  h:52,  color:"#1f6feb"},
-  tray:    {label:"Topping Tray",     shape:"circle", w:120, h:120, color:"#1f6feb"},
-  bottle:  {label:"Condiment Bottle", shape:"circle", w:30,  h:30,  color:"#8250df"},
+  plates:  {label:"Plate Stack",      shape:"circle", w:44,  h:44,  color:"#2c6e49"},
+  silver:  {label:"Silverware Holder",shape:"circle", w:15,  h:15,  color:"#2c6e49"},
+  napkins: {label:"Napkin Holder",    shape:"basket", w:17,  h:15,  color:"#2c6e49"},
+  bowl:    {label:"Topping Bowl",     shape:"circle", w:26,  h:26,  color:"#1f6feb"},
+  tray:    {label:"Topping Tray",     shape:"circle", w:60,  h:60,  color:"#1f6feb"},
+  bottle:  {label:"Condiment Bottle", shape:"circle", w:15,  h:15,  color:"#8250df"},
   label:   {label:"Text Label",       shape:"text",   w:130, h:36,  color:"#57606a"},
 };
 const LINE_PALETTE_GROUPS = [
@@ -8180,12 +8180,22 @@ function renderLinesGrid() {
   }
   grid.innerHTML = savedLineDiagrams.map(d => {
     const meal = d.meal_name ? `<span class="grid-cat-badge">🍽️ ${esc(d.meal_name)}</span>` : "";
-    return `<div onclick="openLineDiagram(${d.id})" style="cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:1rem;background:var(--card)">
+    return `<div onclick="openLineDiagram(${d.id})" style="position:relative;cursor:pointer;border:1px solid var(--border);border-radius:12px;padding:1rem;background:var(--card)">
+      <button class="del-btn" title="Delete line setup" onclick="event.stopPropagation();deleteLineDiagramFromList(${d.id})"
+        style="position:absolute;top:0.5rem;right:0.5rem;font-size:1rem;padding:0 5px">🗑</button>
       <div style="font-size:2rem;margin-bottom:0.3rem">📐</div>
-      <div style="font-weight:800;font-size:0.98rem;margin-bottom:0.35rem">${esc(d.name)}</div>
+      <div style="font-weight:800;font-size:0.98rem;margin-bottom:0.35rem;padding-right:1.4rem">${esc(d.name)}</div>
       <div>${meal}</div>
     </div>`;
   }).join("");
+}
+
+async function deleteLineDiagramFromList(id) {
+  const d = savedLineDiagrams.find(x => x.id === id);
+  if (!await showConfirm(`Delete line setup “${d ? d.name : ""}”? This can’t be undone.`)) return;
+  await fetch(`/line-diagrams/${id}`, {method:"DELETE"});
+  await loadLineDiagrams();
+  showToast("Deleted");
 }
 
 async function createLineDiagram(mealId) {
