@@ -381,7 +381,7 @@ def init_db():
         """)
         for col in ["default_servings REAL DEFAULT NULL", "image TEXT DEFAULT NULL",
                     "hidden INTEGER DEFAULT 0", "dietary_enabled INTEGER DEFAULT 0",
-                    "dietary_default_servings REAL DEFAULT NULL"]:
+                    "dietary_default_servings REAL DEFAULT NULL", "shopping_edits TEXT DEFAULT NULL"]:
             try: conn.execute(f"ALTER TABLE group_meals ADD COLUMN {col}")
             except Exception: pass
         # group_meal_members – must allow the same meal multiple times in one group.
@@ -470,7 +470,7 @@ def init_db():
 
         # Columns added after group_meal_members existed — apply in every branch
         # (fresh, migrated, or already-migrated).
-        for col in ["dietary_servings REAL DEFAULT NULL"]:
+        for col in ["dietary_servings REAL DEFAULT NULL", "shop_excluded TEXT DEFAULT NULL"]:
             try:
                 conn.execute(f"ALTER TABLE group_meal_members ADD COLUMN {col}")
             except Exception:
@@ -2193,7 +2193,8 @@ def list_group_meals():
         f"""SELECT gm.group_id, gm.row_id AS slot_id,
                    gm.meal_id, m.name AS meal_name,
                    gm.recipe_id, r.title AS recipe_title,
-                   gm.servings, gm.recipe_servings, gm.section_title, gm.dietary_servings
+                   gm.servings, gm.recipe_servings, gm.section_title, gm.dietary_servings,
+                   gm.shop_excluded
             FROM group_meal_members gm
             LEFT JOIN meals   m ON m.id = gm.meal_id
             LEFT JOIN recipes r ON r.id = gm.recipe_id
@@ -2221,10 +2222,19 @@ def list_group_meals():
             md["recipe_servings"] = json.loads(md["recipe_servings"]) if md["recipe_servings"] else {}
         except Exception:
             md["recipe_servings"] = {}
+        try:
+            md["shop_excluded"] = json.loads(md["shop_excluded"]) if md["shop_excluded"] else []
+        except Exception:
+            md["shop_excluded"] = []
         members_by_group.setdefault(gid, []).append(md)
     result = []
     for g in groups:
-        result.append({**dict(g), "meals": members_by_group.get(g["id"], [])})
+        gd = dict(g)
+        try:
+            gd["shopping_edits"] = json.loads(gd["shopping_edits"]) if gd.get("shopping_edits") else {}
+        except Exception:
+            gd["shopping_edits"] = {}
+        result.append({**gd, "meals": members_by_group.get(g["id"], [])})
     return jsonify(result)
 
 
@@ -2257,6 +2267,9 @@ def update_group_meal(gid):
         sets.append("dietary_enabled=?"); vals.append(1 if data.get("dietary_enabled") else 0)
     if "dietary_default_servings" in data:
         sets.append("dietary_default_servings=?"); vals.append(_num(data.get("dietary_default_servings")))
+    if "shopping_edits" in data:
+        se = data.get("shopping_edits")
+        sets.append("shopping_edits=?"); vals.append(json.dumps(se) if isinstance(se, dict) else None)
     if sets:
         vals.append(gid)
         db.execute(f"UPDATE group_meals SET {', '.join(sets)} WHERE id=?", vals)
@@ -2342,6 +2355,13 @@ def patch_group_meal_member(gid, slot_id):
             db.execute("UPDATE group_meal_members SET section_title=? WHERE row_id=? AND group_id=?",
                        (title, slot_id, gid))
             db.commit()
+        return jsonify({"ok": True})
+    # Recipe ids excluded from the shopping list for this slot (sent on its own)
+    if "shop_excluded" in data:
+        ex = data.get("shop_excluded")
+        db.execute("UPDATE group_meal_members SET shop_excluded=? WHERE row_id=? AND group_id=?",
+                   (json.dumps([int(x) for x in ex]) if isinstance(ex, list) and ex else None, slot_id, gid))
+        db.commit()
         return jsonify({"ok": True})
     # Per-meal dietary default servings (its own control, sent on its own)
     if "dietary_servings" in data and "servings" not in data:

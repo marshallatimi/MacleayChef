@@ -7108,8 +7108,8 @@ function renderGroupMealDetail() {
               <span class="gm-meal-name" style="cursor:pointer" title="Click to preview recipe"
                 onclick="event.stopPropagation();openRecipePreview(${m.id},{slot:${sid},kind:'slot'})">${esc(m.name)}</span>
               ${_gmBatchNote(m.id, effDirect)}
+              <span style="margin-left:auto;display:flex">${_gmShopBox(sid, [m.id], !(m.shop_excluded || []).includes(m.id))}</span>
               <input type="number" class="gm-srv-input" min="0" step="0.5"
-                style="margin-left:auto"
                 placeholder="${srvPh}" value="${srv}"
                 title="Servings for this recipe."
                 onchange="updateGroupMealServings(${sid}, this.value, true)"
@@ -7139,6 +7139,8 @@ function renderGroupMealDetail() {
         // at the meal or group level — a positive number opts them in.
         const dietBase = m.dietary_servings != null ? m.dietary_servings
                        : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
+        const shopEx = new Set(m.shop_excluded || []);
+        const mealIds = allRecipes.map(r => r.id);
 
         const gmRow = (r, base) => {
           const rph  = rs[r.id] != null ? String(rs[r.id])
@@ -7146,6 +7148,7 @@ function renderGroupMealDetail() {
           const rval = rs[r.id] != null ? rs[r.id] : "";
           const effInner = rs[r.id] != null ? rs[r.id] : base;
           return `<div class="gm-recipe-row">
+            ${_gmShopBox(sid, [r.id], !shopEx.has(r.id))}
             <span class="gm-recipe-name" style="cursor:pointer" title="Click to preview recipe"
               onclick="event.stopPropagation();openRecipePreview(${r.id},{slot:${sid != null ? sid : m.id},kind:'inner',useSlot:${sid != null}})">${esc(r.title)}</span>
             ${_gmBatchNote(r.id, effInner)}
@@ -7193,8 +7196,8 @@ function renderGroupMealDetail() {
             <span class="gm-meal-chevron">▶</span>
             <span class="gm-meal-name">${esc(m.name)}</span>
             <span class="gm-meal-meta">${rc} recipe${rc!==1?"s":""}</span>
+            <span style="margin-left:auto;display:flex">${_gmShopBox(sid, mealIds, !mealIds.some(id => shopEx.has(id)))}</span>
             <input type="number" class="gm-srv-input" min="0" step="0.5"
-              style="margin-left:auto"
               placeholder="${mealPh}" value="${mealVal}"
               title="Servings for this meal. Set to 0 to skip entire meal from print/shopping."
               onchange="updateGroupMealServings(${sid != null ? sid : m.id}, this.value, ${sid != null})"
@@ -7259,6 +7262,7 @@ function renderGroupMealDetail() {
         <div class="recipe-toolbar-left"></div>
         <div class="recipe-toolbar-right">
           <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printGroupShoppingCategorized()">🛒 Print List</button>
+          <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="openShopEditor()">📝 Shopping by Meal</button>
           <button class="btn btn-ghost" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="printGroupRecipes()">🖨 Print Recipes</button>
           <button class="btn btn-dark" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="exportGroupFolderPdf()">📁 Export PDF</button>
           <button class="btn btn-danger" style="padding:0.35rem 0.8rem;font-size:0.82rem" onclick="deleteGroupMeal(${g.id})">🗑 Delete</button>
@@ -7472,6 +7476,29 @@ async function updateGroupMealDietaryServings(slotOrMealId, val, useSlot) {
   await fetch(url, {
     method:"PATCH", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({dietary_servings: srv})
+  });
+}
+
+// 🛒 tick box: checked = on the shopping list. Unticking leaves those recipes
+// off the shopping list only — they still print and keep their servings.
+function _gmShopBox(sid, ids, checked) {
+  if (sid == null || !ids.length) return "";
+  return `<label title="Include in shopping list" onclick="event.stopPropagation()"
+    style="display:inline-flex;align-items:center;gap:2px;font-size:0.8rem;cursor:pointer;flex-shrink:0;opacity:${checked?1:0.45}">
+    <input type="checkbox" ${checked?"checked":""} style="cursor:pointer"
+      onchange="toggleGmShop(${sid},[${ids.join(",")}],this.checked)"/>🛒</label>`;
+}
+
+async function toggleGmShop(sid, ids, include) {
+  const g = selectedGroupMeal; if (!g) return;
+  const slot = (g.meals||[]).find(m => m.slot_id === sid); if (!slot) return;
+  const ex = new Set(slot.shop_excluded || []);
+  ids.forEach(id => include ? ex.delete(id) : ex.add(id));
+  slot.shop_excluded = [...ex];
+  renderGroupMealDetail();
+  await fetch(`/group-meals/${g.id}/slots/${sid}`, {
+    method:"PATCH", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({shop_excluded: slot.shop_excluded})
   });
 }
 
@@ -7757,8 +7784,10 @@ async function confirmMergeCookbook() {
 // Returns array of {recipe, factor} — factor scales ingredients by serving size.
 // Priority: per-recipe override > per-meal override > group default > no scaling (1)
 // {recipe, factor} pairs for ONE group-meal slot (recipe slot or meal slot).
-function _groupSlotPairs(gm) {
+// forShopping drops recipes ticked out of the shopping list (print keeps them).
+function _groupSlotPairs(gm, forShopping) {
   const g = selectedGroupMeal;
+  const ex = forShopping ? new Set(gm.shop_excluded || []) : new Set();
   const out = [];
   const _factor = (r, eff) => {
     if (eff !== null && parseFloat(eff) === 0) return null;   // skipped
@@ -7768,7 +7797,7 @@ function _groupSlotPairs(gm) {
   };
   if (gm.type === "recipe") {
     const r = savedRecipes.find(r => r.id === gm.id);
-    if (!r) return out;
+    if (!r || ex.has(r.id)) return out;
     const eff = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
     const f = _factor(r, eff);
     if (f !== null) out.push({recipe: r, factor: f});
@@ -7784,6 +7813,7 @@ function _groupSlotPairs(gm) {
                  : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
   (full.recipes||[]).forEach(mr => {
     if (mr.dietary && !g.dietary_enabled) return;
+    if (ex.has(mr.id)) return;
     const base = mr.dietary ? dietBase : mealServings;
     const r = savedRecipes.find(r => r.id === mr.id);
     if (!r) return;
@@ -7794,14 +7824,14 @@ function _groupSlotPairs(gm) {
   return out;
 }
 
-function _groupAllRecipes() {
+function _groupAllRecipes(forShopping) {
   const g = selectedGroupMeal;
   if (!g) return [];
-  return (g.meals||[]).flatMap(_groupSlotPairs);
+  return (g.meals||[]).flatMap(gm => _groupSlotPairs(gm, forShopping));
 }
 
 function _groupShoppingEntries() {
-  return _groupAllRecipes().map(({recipe: r, factor}) => {
+  return _groupAllRecipes(true).map(({recipe: r, factor}) => {
     const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
     const ings = igs.flatMap(g => (g.ingredients||[]).filter(t => t && t.trim()));
     // If factor != 1, scale via scaleIngredient (same helper used by the serving scaler)
@@ -7864,64 +7894,38 @@ function exportGroupShoppingPdf() {
   exportPdf(html, selectedGroupMeal.name + " - Shopping List");
 }
 
-function buildShoppingHtmlByMeal(g) {
-  const escP = s => (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  const sections = [];
-  (g.meals||[]).forEach(gm => {
-    // ── Direct recipe slot ────────────────────────────────────────────────────
-    if (gm.type === "recipe") {
-      const r = savedRecipes.find(r => r.id === gm.id);
-      if (!r) return;
-      const effectiveServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
-      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
-      const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-      let factor = 1;
-      if (effectiveServings && origNum && origNum > 0) factor = parseFloat(effectiveServings) / origNum;
-      const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
-      const ings = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => shopIng(factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i));
-      if (ings.length) sections.push({mealName: r.title, ingredients: ings});
-      return;
-    }
-
-    // ── Meal slot ─────────────────────────────────────────────────────────────
-    const full = savedMeals.find(m => m.id === gm.id);
-    if (!full || !full.recipes || !full.recipes.length) return;
-    const rs = gm.recipe_servings || {};
-    const mealServings = gm.servings != null ? gm.servings : (g.default_servings != null ? g.default_servings : null);
-    if (mealServings !== null && parseFloat(mealServings) === 0) return;
-    const dietBase = gm.dietary_servings != null ? gm.dietary_servings
-                   : (g.dietary_default_servings != null ? g.dietary_default_servings : 0);
-    const ings = [];
-    full.recipes.forEach(mr => {
-      if (mr.dietary && !g.dietary_enabled) return; // dietary recipes excluded when toggle is off
-      const base = mr.dietary ? dietBase : mealServings;
-      const effectiveServings = rs[mr.id] != null ? rs[mr.id] : base;
-      if (effectiveServings !== null && parseFloat(effectiveServings) === 0) return;
-      const r = savedRecipes.find(r => r.id === mr.id);
-      if (!r) return;
-      const origNum = r.servings_num || parseServingsNumJS(r.servings) || null;
-      let factor = 1;
-      if (effectiveServings && origNum && origNum > 0) {
-        const target = _applyBatchScale(parseFloat(effectiveServings), origNum, r.scale_by_batch);
-        factor = target / origNum;
-      }
-      const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
-      const scaled = igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean)).map(i => shopIng(factor !== 1 && typeof scaleIngredient === "function" ? scaleIngredient(i, factor) : i));
-      ings.push(...scaled);
-    });
-    if (ings.length) sections.push({mealName: full.name, ingredients: ings});
+// Shopping strings for one slot (respects the 🛒 exclusions).
+function _slotShopIngs(gm) {
+  return _groupSlotPairs(gm, true).flatMap(({recipe: r, factor}) => {
+    const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
+    return igs.flatMap(ig => (ig.ingredients||[]).filter(Boolean))
+      .map(i => shopIng(factor !== 1 ? scaleIngredient(i, factor) : i));
   });
+}
+
+// By-meal sections with the group's saved edits applied: deleted items stay
+// hidden (matched by name, so a servings change doesn't bring them back) and
+// typed-in extras are added under their meal.
+function _groupShopSections(g) {
+  const {removed = {}, added = {}} = g.shopping_edits || {};
+  return (g.meals||[]).filter(gm => gm.type === "meal" || gm.type === "recipe").map(gm => {
+    const key = String(gm.slot_id);
+    const rm = new Set(removed[key] || []);
+    return {key, name: gm.name, auto: _slotShopIngs(gm).filter(i => !rm.has(shopSortKey(i))), added: added[key] || []};
+  });
+}
+
+function buildShoppingHtmlByMeal(g) {
+  const sections = _groupShopSections(g)
+    .map(s => ({name: s.name, items: [...s.auto, ...s.added]}))
+    .filter(s => s.items.length);
   if (!sections.length) return null;
-  const sectionHtml = sections.map(sec => {
-    const sorted = [...sec.ingredients].sort((a,b) =>
-      shopSortKey(a).localeCompare(shopSortKey(b))
-    );
-    return `
+  const sectionHtml = sections.map(sec => `
     <div class="meal-section">
-      <div class="meal-header">${escP(sec.mealName)}</div>
-      ${sorted.map(i => `<div class="ing">___ ${escP(formatIngNameFirst(i))}</div>`).join("\n")}
-    </div>`;
-  }).join("\n");
+      <div class="meal-header">${escP(sec.name)}</div>
+      ${[...sec.items].sort((a,b) => shopSortKey(a).localeCompare(shopSortKey(b)))
+        .map(i => `<div class="ing">___ ${escP(formatIngNameFirst(i))}</div>`).join("\n")}
+    </div>`).join("\n");
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
 <title>${escP(g.name)} — Shopping List by Meal</title>
 <style>
@@ -7936,6 +7940,125 @@ function buildShoppingHtmlByMeal(g) {
 <div class="title">${escP(g.name)} — Shopping List by Meal</div>
 ${sectionHtml}
 </body></html>`;
+}
+
+// ── Editable "Shopping List by Meal" (edits saved on the group meal; the
+// meals and recipes themselves are never touched) ──────────────────────────
+let _shopEdit = null;   // working copy: {sections:[{key,name,items:[{text,auto}]}]}
+
+function _shopEditFrom(g) {
+  return {sections: _groupShopSections(g).map(s => ({key: s.key, name: s.name,
+    items: [...s.auto.map(text => ({text, auto:true})), ...s.added.map(text => ({text, auto:false}))]}))};
+}
+
+function openShopEditor() {
+  if (!selectedGroupMeal) return;
+  _shopEdit = _shopEditFrom(selectedGroupMeal);
+  _renderShopEditor();
+}
+
+function _renderShopEditor(focusIdx) {
+  let bd = document.getElementById("shop-edit-backdrop");
+  if (!bd) { bd = document.createElement("div"); bd.id = "shop-edit-backdrop"; bd.className = "img-modal-backdrop"; document.body.appendChild(bd); }
+  bd.hidden = false;
+  const secs = _shopEdit.sections.map((s, si) => `
+    <div style="margin-bottom:0.9rem">
+      <div style="font-weight:800;border-bottom:1px solid var(--border);padding-bottom:0.2rem;margin-bottom:0.3rem">${esc(s.name)}</div>
+      ${s.items.map((it, ii) => `
+        <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem;padding:1px 0">
+          <span style="flex:1">${esc(formatIngNameFirst(it.text))}${it.auto ? "" : ` <span style="font-size:0.72rem;color:var(--muted)">(added)</span>`}</span>
+          <button class="del-btn" style="padding:0 4px" onclick="_shopEditDel(${si},${ii})" title="Remove from shopping list">✕</button>
+        </div>`).join("") || `<div style="color:var(--muted);font-size:0.82rem">No items.</div>`}
+      <input id="shop-add-${si}" class="prompt-modal-input" style="margin-top:0.35rem;padding:0.3rem 0.55rem;font-size:0.85rem"
+        placeholder="+ Add item to ${esc(s.name)} (Enter)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();event.stopPropagation();_shopEditAdd(${si},this.value)}"/>
+    </div>`).join("") || `<p style="color:var(--muted)">No meals or recipes in this group meal.</p>`;
+  bd.innerHTML = `<div class="img-modal" style="width:min(560px,95vw);max-height:88vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
+    <h3 style="margin:0 0 0.6rem">Shopping List by Meal</h3>
+    <div style="overflow-y:auto;flex:1;padding-right:4px">${secs}</div>
+    <div class="img-modal-btns" style="margin-top:0.8rem">
+      <button class="btn btn-ghost" onclick="_shopEditReset()" title="Undo all edits — rebuild from the recipes (not saved until you Save)">↺ Reset</button>
+      <button class="btn btn-ghost" onclick="_closeShopEditor()">Cancel</button>
+      <button class="btn btn-ghost" onclick="_saveShopEditor(true)">🖨 Save &amp; Print</button>
+      <button class="btn btn-primary" onclick="_saveShopEditor(false)">Save</button>
+    </div></div>`;
+  if (focusIdx != null) document.getElementById(`shop-add-${focusIdx}`)?.focus();
+}
+
+function _shopEditDel(si, ii) { _shopEdit.sections[si].items.splice(ii, 1); _renderShopEditor(); }
+function _shopEditAdd(si, val) {
+  const text = (val || "").trim(); if (!text) return;
+  _shopEdit.sections[si].items.push({text, auto:false});
+  _renderShopEditor(si);   // keep typing into the same meal
+}
+function _shopEditReset() { _shopEdit = _shopEditFrom({...selectedGroupMeal, shopping_edits:{}}); _renderShopEditor(); }
+function _closeShopEditor() { const bd = document.getElementById("shop-edit-backdrop"); if (bd) bd.hidden = true; _shopEdit = null; }
+
+async function _saveShopEditor(andPrint) {
+  const g = selectedGroupMeal; if (!g || !_shopEdit) return;
+  const prevAdded = new Set(Object.values((g.shopping_edits || {}).added || {}).flat());
+  const bySlot = Object.fromEntries((g.meals||[]).map(gm => [String(gm.slot_id), gm]));
+  const removed = {}, added = {}, fresh = [];
+  _shopEdit.sections.forEach(s => {
+    // Anything the recipes produce that's no longer in the list = removed (by name).
+    const keep = new Set(s.items.filter(i => i.auto).map(i => shopSortKey(i.text)));
+    const rm = [...new Set(_slotShopIngs(bySlot[s.key]).map(shopSortKey))].filter(k => !keep.has(k));
+    if (rm.length) removed[s.key] = rm;
+    const ad = s.items.filter(i => !i.auto).map(i => i.text);
+    if (ad.length) added[s.key] = ad;
+    ad.forEach(t => { if (!prevAdded.has(t)) fresh.push(t); });
+  });
+  g.shopping_edits = {removed, added};
+  await fetch(`/group-meals/${g.id}`, {
+    method:"PUT", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({shopping_edits: g.shopping_edits})
+  });
+  _closeShopEditor();
+  showToast("Shopping list saved");
+  if (fresh.length) await _askNewItemCategories(fresh);
+  if (andPrint) printGroupShoppingByMeal();
+}
+
+// After saving, let the user file each newly-added item into a shopping category.
+async function _askNewItemCategories(items) {
+  await loadShopSettings();   // must load first — saving posts the whole settings object
+  const keyOf = t => ingNameKey(parseIngForCombine(t).name).toLowerCase();
+  const uniq = [...new Map(items.map(t => [keyOf(t), t])).entries()];
+  const opts = cur => {
+    if (!SHOP_CATEGORY_NAMES.includes(cur)) cur = "Other";
+    return SHOP_CATEGORY_NAMES.map(c => `<option${c === cur ? " selected" : ""}>${esc(c)}</option>`).join("");
+  };
+  return new Promise(resolve => {
+    const bd = document.createElement("div");
+    bd.className = "img-modal-backdrop";
+    bd.innerHTML = `<div class="img-modal" style="width:min(460px,95vw)">
+      <h3 style="margin:0 0 0.4rem">New shopping items</h3>
+      <p style="font-size:0.85rem;color:var(--muted);margin:0 0 0.7rem">Pick a category for each item you added.</p>
+      <div style="max-height:55vh;overflow-y:auto">${uniq.map(([k, t]) => `
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.35rem">
+          <span style="flex:1;font-size:0.9rem">${esc(t)}</span>
+          <select data-k="${esc(k)}" style="padding:0.25rem 0.4rem;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text)">
+            ${opts(_shopSettings.ingredient_categories[k] || _autoDetectCategory(k) || "Other")}</select>
+        </div>`).join("")}</div>
+      <div class="img-modal-btns" style="margin-top:0.8rem">
+        <button class="btn btn-ghost" data-act="skip">Skip</button>
+        <button class="btn btn-primary" data-act="save">Save categories</button>
+      </div></div>`;
+    document.body.appendChild(bd);
+    bd.addEventListener("click", async e => {
+      const act = e.target.dataset && e.target.dataset.act;
+      if (!act) return;
+      if (act === "save") {
+        bd.querySelectorAll("select[data-k]").forEach(s => { _shopSettings.ingredient_categories[s.dataset.k] = s.value; });
+        try {
+          await fetch("/shopping/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(_shopSettings)});
+          showToast("Categories saved");
+        } catch { showAlert("Failed to save categories."); }
+      }
+      bd.remove();
+      resolve();
+    });
+  });
 }
 
 function printGroupShoppingByMeal() {
