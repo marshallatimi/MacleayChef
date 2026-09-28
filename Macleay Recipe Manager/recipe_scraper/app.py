@@ -1775,6 +1775,8 @@ def update_recipe(rid):
         db.execute("UPDATE recipes SET collection_id=? WHERE id=?", (cid, rid))
     db.commit()
     row = db.execute("SELECT * FROM recipes WHERE id=?", (rid,)).fetchone()
+    if not row:   # recipe was deleted (e.g. from another window) while being edited
+        return jsonify({"error": "Recipe no longer exists"}), 404
     return jsonify(row_to_dict(row))
 
 
@@ -1806,6 +1808,12 @@ def _image_file_to_data_uri(file_storage, max_side=1200, quality=82):
     shared across multiple computers via a network or cloud drive.
     """
     return _pil_to_data_uri(PilImage.open(file_storage.stream), max_side, quality)
+
+
+@app.errorhandler(PilImage.UnidentifiedImageError)
+def _bad_image(_e):
+    # Any photo upload (recipe / meal / group meal) that isn't a readable image.
+    return jsonify({"error": "That file isn't a supported image (try JPG or PNG)."}), 400
 
 
 def _path_to_data_uri(path, max_side=1200, quality=82):
@@ -3182,6 +3190,15 @@ def merge_cookbook():
                         new_obj[str(tgt)] = v
                 return json.dumps(new_obj) if new_obj else None
 
+            def _remap_id_list(raw):
+                """shop_excluded is a JSON list of source recipe ids — remap them."""
+                try:
+                    ids = json.loads(raw) if raw else []
+                except Exception:
+                    return None
+                out = [recipe_id_map[i] for i in ids if i in recipe_id_map]
+                return json.dumps(out) if out else None
+
             for sg in src_groups:
                 gkey = (sg.get("name") or "").strip().lower()
                 if gkey in existing_group_names:
@@ -3196,6 +3213,7 @@ def merge_cookbook():
                 existing_group_names.add(gkey)
                 groups_added += 1
 
+                slot_map = {}   # source slot row_id -> new slot row_id
                 for gmm in gm_by_group.get(sg.get("id"), []):
                     sort_order    = gmm.get("sort_order") or 0
                     section_title = gmm.get("section_title")
@@ -3211,24 +3229,38 @@ def merge_cookbook():
                     elif src_rid:                          # standalone-recipe slot
                         tgt_rid = ensure_recipe(src_rid)
                         if tgt_rid is not None:
-                            db.execute(
+                            cur = db.execute(
                                 "INSERT INTO group_meal_members "
-                                "(group_id, meal_id, recipe_id, servings, sort_order, recipe_servings) "
-                                "VALUES (?,?,?,?,?,?)",
+                                "(group_id, meal_id, recipe_id, servings, sort_order, recipe_servings, shop_excluded) "
+                                "VALUES (?,?,?,?,?,?,?)",
                                 (new_gid, 0, tgt_rid, gmm.get("servings"), sort_order,
-                                 _remap_recipe_servings(gmm.get("recipe_servings"))),
+                                 _remap_recipe_servings(gmm.get("recipe_servings")),
+                                 _remap_id_list(gmm.get("shop_excluded"))),
                             )
+                            slot_map[str(gmm.get("row_id"))] = str(cur.lastrowid)
                     elif src_mid:                          # meal slot
                         tgt_mid = ensure_meal(src_mid)
                         if tgt_mid is not None:
-                            db.execute(
+                            cur = db.execute(
                                 "INSERT INTO group_meal_members "
-                                "(group_id, meal_id, servings, sort_order, recipe_servings, dietary_servings) "
-                                "VALUES (?,?,?,?,?,?)",
+                                "(group_id, meal_id, servings, sort_order, recipe_servings, dietary_servings, shop_excluded) "
+                                "VALUES (?,?,?,?,?,?,?)",
                                 (new_gid, tgt_mid, gmm.get("servings"), sort_order,
                                  _remap_recipe_servings(gmm.get("recipe_servings")),
-                                 gmm.get("dietary_servings")),
+                                 gmm.get("dietary_servings"),
+                                 _remap_id_list(gmm.get("shop_excluded"))),
                             )
+                            slot_map[str(gmm.get("row_id"))] = str(cur.lastrowid)
+
+                # Shopping-list edits are keyed by slot id — re-key to the new slots.
+                try:
+                    se = json.loads(sg.get("shopping_edits") or "{}")
+                except Exception:
+                    se = {}
+                if se:
+                    se = {part: {slot_map[k]: v for k, v in (se.get(part) or {}).items() if k in slot_map}
+                          for part in ("removed", "added")}
+                    db.execute("UPDATE group_meals SET shopping_edits=? WHERE id=?", (json.dumps(se), new_gid))
 
     # ── Line-setup diagrams (additive by name; remap meal_id by meal name) ────
     diagrams_added = 0

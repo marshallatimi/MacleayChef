@@ -353,6 +353,7 @@
     .gm-meal-block:active { cursor:grabbing; }
     .gm-meal-block.gm-drag-over { border-color:var(--red); box-shadow:0 0 0 2px rgba(180,60,60,0.18); }
     .gm-meal-block.gm-dragging { opacity:0.45; }
+    .gm-meal-block.drop-above, .meal-recipe-row.drop-above { box-shadow:inset 0 3px 0 var(--red) !important; }
     .gm-meal-header { display:flex; align-items:center; gap:0.6rem; padding:0.55rem 0.8rem; background:var(--bg); cursor:grab; user-select:none; }
     /* Section header slots inside a group meal */
     .gm-section-block { border:none; border-radius:0; margin:1rem 0 0.45rem; overflow:visible; background:none; }
@@ -1396,8 +1397,12 @@ function showTab(tab) {
 document.getElementById("url-input").addEventListener("keydown", e => { if (e.key === "Enter") scrapeRecipe(); });
 
 async function scrapeRecipe() {
-  const url = document.getElementById("url-input").value.trim();
+  let url = document.getElementById("url-input").value.trim();
   if (!url) { setStatus("scrape-status", "Please enter a URL.", true); return; }
+  // "allrecipes.com/recipe/…" pasted without the scheme — add it for them
+  if (!/^https?:\/\//i.test(url) && /^[\w-]+(\.[\w-]+)+(\/|$)/.test(url)) url = "https://" + url;
+  try { if (!/^https?:$/.test(new URL(url).protocol)) throw 0; }
+  catch { setStatus("scrape-status", "That doesn't look like a web address — paste the full recipe link (starting with https://).", true); return; }
   const btn = document.getElementById("scrape-btn");
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Scraping…';
@@ -4562,10 +4567,12 @@ const HELP_TOPICS = [
   { id:"editing",   icon:"✏️",  label:"Editing a Recipe" },
   { id:"create",    icon:"➕", label:"Creating a Recipe" },
   { id:"categories",icon:"🏷️", label:"Categories" },
+  { id:"collections",icon:"🗂️", label:"Collections" },
   { id:"cookbooks", icon:"📚", label:"Cookbooks" },
   { id:"importexp", icon:"📥", label:"Import &amp; Export" },
   { id:"meals",     icon:"🍽️", label:"Meals" },
   { id:"groupmeal", icon:"🍴", label:"Group Meal" },
+  { id:"lines",     icon:"📐", label:"Line Setup" },
   { id:"shopping",  icon:"🛒", label:"Shopping List" },
   { id:"print",     icon:"🖨️", label:"Printing &amp; PDF" },
   { id:"settings",  icon:"⚙️", label:"Settings" },
@@ -4573,6 +4580,27 @@ const HELP_TOPICS = [
 ];
 
 const HELP_CONTENT = {
+  lines: `<h3>📐 Line Setup</h3>
+    <p>Design how your <strong>serving line</strong> (2 tables) and <strong>condiment line</strong> (1 table) are laid out.</p>
+    <h4>Building a setup</h4>
+    <ul>
+      <li>Go to the <strong>📐 Line Setup</strong> tab and click <strong>+ New Line Setup</strong>, or open one from a meal</li>
+      <li>Drag an item from the left onto a slot. Drop a second item on a slot's top or bottom half to stack two</li>
+      <li>Drag placed items to move them; click one and press <strong>✕</strong> or Delete to remove it</li>
+      <li>Click the <strong>food</strong> and <strong>utensil</strong> labels to type in them — Enter saves</li>
+    </ul>
+    <h4>Printing</h4>
+    <ul>
+      <li>Tie a setup to a meal and it prints right after that meal's recipes (also inside group meal printouts)</li>
+      <li>The layout prints sideways on a portrait page — turn the paper to read it</li>
+    </ul>`,
+  collections: `<h3>🗂️ Collections</h3>
+    <p>A <strong>Collection</strong> is a broader grouping above category tags (e.g. "Holiday", "Camp Menu").</p>
+    <ul>
+      <li>Click <strong>🗂️ Manage</strong> in the collections bar above the recipe grid to add, rename or delete them</li>
+      <li>Assign a recipe from its page, or bulk-select recipes and assign them all at once</li>
+      <li>Use the collection toggles to show or hide collections in every recipe search — the choice is remembered on this computer</li>
+    </ul>`,
   scrape: `<h3>🔍 Scraping Recipes</h3>
     <p>The <strong>Scrape Recipe</strong> tab lets you grab a recipe directly from almost any recipe website just by pasting its URL.</p>
     <h4>How to use it</h4>
@@ -4743,9 +4771,18 @@ const HELP_CONTENT = {
       <li>Click <strong>🖨 Print All Recipes</strong> to print every recipe in the meal</li>
       <li>Click <strong>💾 Save Recipes PDF</strong> to export all recipes to a PDF file</li>
     </ul>
+    <h4>Dietary recipes</h4>
+    <ul>
+      <li>Each meal has a <strong>🥗 Dietary Recipes</strong> section for alternatives (e.g. gluten-free versions)</li>
+      <li>They only appear in a group meal when that group's <strong>Include dietary recipes</strong> option is on</li>
+    </ul>
     <h4>Shopping from a meal</h4>
     <ul>
-      <li>Go to the <strong>Shopping List</strong> tab and search for your meal to add it all at once</li>
+      <li>Go to the <strong>Shopping List</strong> tab and search for your meal to add it all at once (dietary alternatives are left out — add them on their own if needed)</li>
+    </ul>
+    <h4>Serving line</h4>
+    <ul>
+      <li>Click <strong>📐 Open / Create Serving Line</strong> on a meal to design its line setup — it prints with the meal</li>
     </ul>`,
 
   groupmeal: `<h3>🍴 Group Meal</h3>
@@ -4767,10 +4804,22 @@ const HELP_CONTENT = {
       <li><strong>🛒 Print List</strong> — prints a merged, categorized shopping list of all meals' ingredients</li>
       <li><strong>💾 Shopping PDF</strong> — saves the merged shopping list to a PDF file</li>
     </ul>
+    <h4>Organising</h4>
+    <ul>
+      <li>Add standalone recipes as well as meals, and <strong>+ Add Section</strong> titles to group them</li>
+      <li>Drag the <strong>⠿</strong> handle to reorder — drop on the top half of an item to place it above, the bottom half to place it below (or inside a section)</li>
+    </ul>
     <h4>Serving sizes</h4>
     <ul>
       <li>Set a <strong>default serving size</strong> for the whole group, or override per-meal or per-recipe</li>
       <li>Setting a recipe or meal to <strong>0 servings</strong> removes it from all printing and shopping</li>
+      <li>Turn on <strong>🥗 Include dietary recipes</strong> to add each meal's dietary alternatives; they default to 0 servings until you set a number</li>
+    </ul>
+    <h4>Shopping list</h4>
+    <ul>
+      <li>Untick a <strong>🛒</strong> box to leave that meal or recipe off the shopping list only — it still prints</li>
+      <li><strong>📝 Shopping by Meal</strong> lets you edit, delete or add lines under any meal. Edits are saved with the group meal, never change your recipes, and are used by both shopping lists</li>
+      <li>After saving, any new items pop up so you can choose their shopping category</li>
     </ul>
     <div class="help-tip">💡 Groups are saved permanently and are per-cookbook — switching cookbooks shows that cookbook's groups.</div>`,
 
@@ -5076,8 +5125,11 @@ async function createCookbook() {
   });
   const data = await res.json();
   if (!res.ok) { showAlert(data.error || "Could not create cookbook."); return; }
-  await switchCookbook(data.path, data.name);
+  // switchCookbook takes a list index — reload the list, then switch so the
+  // header, recipes, meals and undo history all move to the new cookbook.
   await initCookbooksTab();
+  const i = savedCookbooks.findIndex(c => c.path === data.path);
+  if (i >= 0) await switchCookbook(i);
   showToast(`"${data.name}" created and activated!`);
 }
 
@@ -5945,9 +5997,11 @@ function openShopAddModal(type, id) {
   shopAddTarget = {type, data};
   document.getElementById("shop-add-modal-title").textContent = type==="recipe" ? data.title : data.name;
   const desc = document.getElementById("shop-add-modal-desc");
-  desc.textContent = type==="meal"
-    ? `Adds all ${data.recipes.length} recipe${data.recipes.length===1?"":"s"} from this meal to the list.`
-    : "";
+  if (type === "meal") {
+    const n = data.recipes.filter(r => !r.dietary).length, nd = data.recipes.length - n;
+    desc.textContent = `Adds all ${n} recipe${n===1?"":"s"} from this meal to the list.`
+      + (nd ? ` Its ${nd} dietary alternative${nd===1?" isn't":"s aren't"} included — add ${nd===1?"it":"them"} on ${nd===1?"its":"their"} own if needed.` : "");
+  } else desc.textContent = "";
   const firstR = type==="recipe" ? data : data.recipes[0];
   document.getElementById("shop-add-servings").value =
     (firstR && (firstR.servings_num || parseServingsNumJS(firstR.servings))) || 4;
@@ -5970,7 +6024,8 @@ async function confirmShopAdd() {
 
   const toAdd = shopAddTarget.type==="recipe"
     ? [shopAddTarget.data]
-    : shopAddTarget.data.recipes.map(mr => savedRecipes.find(r => r.id===mr.id)).filter(Boolean);
+    : shopAddTarget.data.recipes.filter(mr => !mr.dietary)   // dietary = alternatives, not extra food
+        .map(mr => savedRecipes.find(r => r.id===mr.id)).filter(Boolean);
 
   toAdd.forEach(r => {
     // If servings is explicitly set to 0, skip this recipe
@@ -6959,19 +7014,28 @@ function _gmSlotDragOver(event, slotId, slotType) {
   // Mixed ordering: meals and recipes can be dropped anywhere relative to each other
   if (_gmDragSlotId == null || _gmDragSlotId === slotId) return;
   event.preventDefault();
-  event.currentTarget.classList.add("gm-drag-over");
+  const above = _dropAbove(event);
+  event.currentTarget.classList.toggle("drop-above", above);
+  event.currentTarget.classList.toggle("gm-drag-over", !above);
+}
+// Upper half of the drop target → place above it (lets items reach the top of
+// a list); lower half → below it.
+function _dropAbove(event) {
+  const r = event.currentTarget.getBoundingClientRect();
+  return event.clientY < r.top + r.height / 2;
 }
 function _gmSlotDragLeave(event) {
-  event.currentTarget.classList.remove("gm-drag-over");
+  event.currentTarget.classList.remove("gm-drag-over", "drop-above");
 }
 function _gmSlotDragEnd(event) {
   _gmDragSlotId = null; _gmDragSlotType = null;
-  document.querySelectorAll(".gm-meal-block.gm-dragging,.gm-meal-block.gm-drag-over")
-    .forEach(el => el.classList.remove("gm-dragging","gm-drag-over"));
+  document.querySelectorAll(".gm-meal-block.gm-dragging,.gm-meal-block.gm-drag-over,.gm-meal-block.drop-above")
+    .forEach(el => el.classList.remove("gm-dragging","gm-drag-over","drop-above"));
 }
 async function _gmSlotDrop(event, targetSlotId, slotType) {
   event.preventDefault();
-  event.currentTarget.classList.remove("gm-drag-over");
+  const above = _dropAbove(event);
+  event.currentTarget.classList.remove("gm-drag-over", "drop-above");
   if (_gmDragSlotId == null || _gmDragSlotId === targetSlotId) return;
   const g = selectedGroupMeal;
   if (!g) return;
@@ -6979,10 +7043,10 @@ async function _gmSlotDrop(event, targetSlotId, slotType) {
   const fromIdx = meals.findIndex(m => m.slot_id === _gmDragSlotId);
   if (fromIdx < 0 || meals.findIndex(m => m.slot_id === targetSlotId) < 0) return;
   const [item] = meals.splice(fromIdx, 1);
-  // Insert BELOW the drop target — dropping onto a section header places the
-  // item inside that section
+  // Upper half of the target = above it; lower half = below it (so dropping on
+  // the lower part of a section header places the item inside that section).
   const toIdx = meals.findIndex(m => m.slot_id === targetSlotId);
-  meals.splice(toIdx + 1, 0, item);
+  meals.splice(above ? toIdx : toIdx + 1, 0, item);
   g.meals = meals;
   const order = meals.map(m => m.slot_id);
   await fetch(`/group-meals/${g.id}/slots/reorder`, {
@@ -7003,28 +7067,31 @@ function _mealRecipeDragStart(event, recipeId) {
 function _mealRecipeDragOver(event, recipeId) {
   if (_mealRecipeDragId == null || _mealRecipeDragId === recipeId) return;
   event.preventDefault();
-  event.currentTarget.classList.add("meal-drag-over");
+  const above = _dropAbove(event);
+  event.currentTarget.classList.toggle("drop-above", above);
+  event.currentTarget.classList.toggle("meal-drag-over", !above);
 }
 function _mealRecipeDragLeave(event) {
-  event.currentTarget.classList.remove("meal-drag-over");
+  event.currentTarget.classList.remove("meal-drag-over", "drop-above");
 }
 function _mealRecipeDragEnd(event) {
   _mealRecipeDragId = null;
-  document.querySelectorAll(".meal-recipe-row.meal-dragging,.meal-recipe-row.meal-drag-over")
-    .forEach(el => el.classList.remove("meal-dragging","meal-drag-over"));
+  document.querySelectorAll(".meal-recipe-row.meal-dragging,.meal-recipe-row.meal-drag-over,.meal-recipe-row.drop-above")
+    .forEach(el => el.classList.remove("meal-dragging","meal-drag-over","drop-above"));
 }
 async function _mealRecipeDrop(event, recipeId) {
   event.preventDefault();
-  event.currentTarget.classList.remove("meal-drag-over");
+  const above = _dropAbove(event);
+  event.currentTarget.classList.remove("meal-drag-over", "drop-above");
   if (_mealRecipeDragId == null || _mealRecipeDragId === recipeId) return;
   const m = selectedMeal;
   if (!m) return;
   const fromIdx = m.recipes.findIndex(r => r.id === _mealRecipeDragId);
   if (fromIdx < 0 || m.recipes.findIndex(r => r.id === recipeId) < 0) return;
   const [item] = m.recipes.splice(fromIdx, 1);
-  // Insert BELOW the drop target (consistent with group meal dragging)
+  // Upper half of the target = above it, lower half = below (same as group meals)
   const toIdx = m.recipes.findIndex(r => r.id === recipeId);
-  m.recipes.splice(toIdx + 1, 0, item);
+  m.recipes.splice(above ? toIdx : toIdx + 1, 0, item);
   const idx = savedMeals.findIndex(sm => sm.id === m.id);
   if (idx !== -1) savedMeals[idx].recipes = [...m.recipes];
   await fetch(`/meals/${m.id}/recipes/reorder`, {
@@ -8853,6 +8920,79 @@ function doPrint(fullHtml) {
 }
 
 const CHANGELOG = [
+  {
+    version: "v1.13.2",
+    notes: [
+      "Creating a new cookbook now fully switches the app to it (previously the old cookbook's recipes stayed on screen)",
+      "Drag-and-drop in group meals and meals: drop on the top half of an item to place it above — items can now be moved to the very top",
+      "Adding a meal to the shopping list no longer also adds its dietary alternatives",
+      "Merging cookbooks now carries over 🛒 shopping exclusions and Shopping by Meal edits",
+      "Friendlier message for a bad recipe link; links pasted without https:// now work",
+      "Uploading a file that isn't an image now shows a clear message instead of failing",
+      "Changelog brought up to date",
+    ]
+  },
+  {
+    version: "v1.13",
+    notes: [
+      "🛒 tick boxes on group-meal meals and recipes — untick to leave them off the shopping list (they still print)",
+      "📝 Shopping by Meal editor — edit, delete or add lines under any meal; saved with the group meal and used by both shopping lists",
+      "New items you add pop up so you can pick their shopping category",
+    ]
+  },
+  {
+    version: "v1.12",
+    notes: [
+      "Serving-line setups lock items into slots: 4 per serving table, 8 condiment slots that hold two stacked or one centered item",
+      "Single 'Plates/Silverware/Napkins' block; food and utensil labels on every item (on the item when it fits, underneath when small)",
+      "Line setups print rotated on a portrait page with solid black tables, right after the meal they belong to",
+    ]
+  },
+  {
+    version: "v1.11",
+    notes: [
+      "📐 Line Setup tab — design serving and condiment lines by dragging chafers, pans, bowls, trays and bottles onto the tables",
+      "Tie a line setup to a meal (open it from the meal page); it prints with that meal's recipes",
+    ]
+  },
+  {
+    version: "v1.10",
+    notes: [
+      "Dietary recipes section on every meal, plus a Dietary toggle and default servings for group meals",
+      "Dietary servings default to 0 until you set them; faster recipe thumbnails",
+    ]
+  },
+  {
+    version: "v1.9",
+    notes: [
+      "Merge from another cookbook now brings its meals and group meals too",
+      "Shopping list: add every recipe at once",
+      "Bulk-select recipes to add/remove tags or assign a collection; undo covers tag and collection changes",
+      "Collection toggles in every recipe search",
+      "Build no longer compressed with UPX, reducing antivirus false positives",
+    ]
+  },
+  {
+    version: "v1.8",
+    notes: [
+      "Lossless recipe export with a format chooser (CSV/PDF)",
+      "Category dropdown on the group meal's Add Recipe list",
+    ]
+  },
+  {
+    version: "v1.7",
+    notes: [
+      "Collections — group recipes above category tags, with badges on recipe cards",
+      "Bulk-select recipes; recipe cards show a photo only when there is one",
+    ]
+  },
+  {
+    version: "v1.6.2 – v1.6.3",
+    notes: [
+      "Group meals can be hidden; slimmer cards and live defaults",
+      "Clearing a meal's servings resets it to the group default",
+    ]
+  },
   {
     version: "v1.6.1",
     notes: [
