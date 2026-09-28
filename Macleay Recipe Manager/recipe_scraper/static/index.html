@@ -7148,15 +7148,16 @@ function renderGroupMealDetail() {
           const rval = rs[r.id] != null ? rs[r.id] : "";
           const effInner = rs[r.id] != null ? rs[r.id] : base;
           return `<div class="gm-recipe-row">
-            ${_gmShopBox(sid, [r.id], !shopEx.has(r.id))}
             <span class="gm-recipe-name" style="cursor:pointer" title="Click to preview recipe"
               onclick="event.stopPropagation();openRecipePreview(${r.id},{slot:${sid != null ? sid : m.id},kind:'inner',useSlot:${sid != null}})">${esc(r.title)}</span>
             ${_gmBatchNote(r.id, effInner)}
             <span class="gm-srv-label">Servings:</span>
+            ${_gmShopBox(sid, [r.id], !shopEx.has(r.id))}
             <input type="number" class="gm-srv-input" min="0" step="0.5"
               placeholder="${rph}" value="${rval}"
               title="Servings for this recipe only."
               onchange="updateGroupRecipeServings(${sid != null ? sid : m.id}, ${r.id}, this.value, ${sid != null})"/>
+            <span class="del-btn" aria-hidden="true" style="font-size:0.9rem;padding:0 4px;flex-shrink:0;visibility:hidden">✕</span>
           </div>`;
         };
 
@@ -7830,16 +7831,12 @@ function _groupAllRecipes(forShopping) {
   return (g.meals||[]).flatMap(gm => _groupSlotPairs(gm, forShopping));
 }
 
+// Category list entries come from the same by-meal sections, so edits made in
+// the Shopping by Meal editor show up here too.
 function _groupShoppingEntries() {
-  return _groupAllRecipes(true).map(({recipe: r, factor}) => {
-    const igs = r.ingredient_groups || [{purpose:null, ingredients:r.ingredients||[]}];
-    const ings = igs.flatMap(g => (g.ingredients||[]).filter(t => t && t.trim()));
-    // If factor != 1, scale via scaleIngredient (same helper used by the serving scaler)
-    const scaled = factor !== 1 && typeof scaleIngredient === "function"
-      ? ings.map(i => shopIng(scaleIngredient(i, factor)))
-      : ings.map(shopIng);
-    return { label: r.title, ingredients: scaled };
-  });
+  if (!selectedGroupMeal) return [];
+  return _groupShopSections(selectedGroupMeal)
+    .map(s => ({label: s.name, ingredients: [...s.auto, ...s.added]}));
 }
 
 function _groupMealIds() {
@@ -7910,8 +7907,14 @@ function _groupShopSections(g) {
   const {removed = {}, added = {}} = g.shopping_edits || {};
   return (g.meals||[]).filter(gm => gm.type === "meal" || gm.type === "recipe").map(gm => {
     const key = String(gm.slot_id);
-    const rm = new Set(removed[key] || []);
-    return {key, name: gm.name, auto: _slotShopIngs(gm).filter(i => !rm.has(shopSortKey(i))), added: added[key] || []};
+    const rm = [...(removed[key] || [])];   // one entry per deleted line (duplicates count)
+    const auto = _slotShopIngs(gm).filter(i => {
+      const j = rm.indexOf(shopSortKey(i));
+      if (j < 0) return true;
+      rm.splice(j, 1);
+      return false;
+    });
+    return {key, name: gm.name, auto, added: added[key] || []};
   });
 }
 
@@ -7966,7 +7969,10 @@ function _renderShopEditor(focusIdx) {
       <div style="font-weight:800;border-bottom:1px solid var(--border);padding-bottom:0.2rem;margin-bottom:0.3rem">${esc(s.name)}</div>
       ${s.items.map((it, ii) => `
         <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem;padding:1px 0">
-          <span style="flex:1">${esc(formatIngNameFirst(it.text))}${it.auto ? "" : ` <span style="font-size:0.72rem;color:var(--muted)">(added)</span>`}</span>
+          <input value="${esc(it.text)}" title="Edit this line" onchange="_shopEditSet(${si},${ii},this.value)"
+            style="flex:1;min-width:0;padding:0.15rem 0.4rem;border:1px solid transparent;border-radius:5px;background:transparent;color:var(--text);font:inherit"
+            onfocus="this.style.borderColor='var(--border)'" onblur="this.style.borderColor='transparent'"/>
+          ${it.auto ? "" : `<span style="font-size:0.72rem;color:var(--muted)">(edited)</span>`}
           <button class="del-btn" style="padding:0 4px" onclick="_shopEditDel(${si},${ii})" title="Remove from shopping list">✕</button>
         </div>`).join("") || `<div style="color:var(--muted);font-size:0.82rem">No items.</div>`}
       <input id="shop-add-${si}" class="prompt-modal-input" style="margin-top:0.35rem;padding:0.3rem 0.55rem;font-size:0.85rem"
@@ -7986,6 +7992,13 @@ function _renderShopEditor(focusIdx) {
 }
 
 function _shopEditDel(si, ii) { _shopEdit.sections[si].items.splice(ii, 1); _renderShopEditor(); }
+// Editing a line makes it the user's own (the recipe's original stays hidden on
+// save). No re-render on a normal edit, so tabbing to the next line keeps focus.
+function _shopEditSet(si, ii, val) {
+  const items = _shopEdit.sections[si].items, text = (val || "").trim();
+  if (!text) { items.splice(ii, 1); _renderShopEditor(); return; }
+  if (text !== items[ii].text) items[ii] = {text, auto:false};
+}
 function _shopEditAdd(si, val) {
   const text = (val || "").trim(); if (!text) return;
   _shopEdit.sections[si].items.push({text, auto:false});
@@ -8000,9 +8013,9 @@ async function _saveShopEditor(andPrint) {
   const bySlot = Object.fromEntries((g.meals||[]).map(gm => [String(gm.slot_id), gm]));
   const removed = {}, added = {}, fresh = [];
   _shopEdit.sections.forEach(s => {
-    // Anything the recipes produce that's no longer in the list = removed (by name).
-    const keep = new Set(s.items.filter(i => i.auto).map(i => shopSortKey(i.text)));
-    const rm = [...new Set(_slotShopIngs(bySlot[s.key]).map(shopSortKey))].filter(k => !keep.has(k));
+    // Recipe lines no longer in the list = removed (by name, one entry per line).
+    const rm = _slotShopIngs(bySlot[s.key]).map(shopSortKey);
+    s.items.filter(i => i.auto).forEach(i => { const j = rm.indexOf(shopSortKey(i.text)); if (j >= 0) rm.splice(j, 1); });
     if (rm.length) removed[s.key] = rm;
     const ad = s.items.filter(i => !i.auto).map(i => i.text);
     if (ad.length) added[s.key] = ad;
